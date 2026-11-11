@@ -22,6 +22,7 @@
     background:linear-gradient(45deg,transparent 46%,#fff 46%,#fff 54%,transparent 54%),linear-gradient(-45deg,transparent 46%,#fff 46%,#fff 54%,transparent 54%)}
   #round{position:fixed;left:28px;bottom:20px;font:900 74px Georgia,serif;color:#8e0d0d;text-shadow:0 0 14px #300,0 2px 2px #000;letter-spacing:2px}
   #left{position:fixed;left:32px;bottom:104px;font-size:13px;color:#a99;letter-spacing:2px;text-transform:uppercase;text-shadow:0 1px 2px #000}
+  #obj{position:fixed;left:20px;top:36px;font-size:12px;color:#c8b070;letter-spacing:1px;text-shadow:0 1px 2px #000}
   #scores{position:fixed;right:26px;bottom:120px;text-align:right;font-size:16px;text-shadow:0 1px 3px #000}
   #scores div{margin:3px 0;color:#9a9a90}
   #scores .me{color:#f2e6b0;font-weight:700;font-size:20px}
@@ -74,6 +75,7 @@
   <div id="cross"><i></i><i></i><i></i><i></i></div>
   <div id="hit"></div>
   <div id="left"></div>
+  <div id="obj"></div>
   <div id="round"></div>
   <div id="scores"></div>
   <div id="ammo"><div id="wname"></div><div><span id="am"></span><span id="rs"></span></div><div id="kn"><b>V</b>KNIFE</div></div>
@@ -111,7 +113,7 @@
   <div class="panel" style="text-align:center">
     <h1 id="overtitle">YOU DIED</h1>
     <div class="sub" id="overtext"></div>
-    <button onclick="location.reload()">Try again</button>
+    <button id="again" onclick="location.reload()">Try again</button>
   </div>
 </div>
 
