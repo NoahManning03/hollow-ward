@@ -174,10 +174,11 @@ function sTone(freq, dur, vol, type, when, slideTo) {
   o.connect(g).connect(master); o.start(t); o.stop(t + dur + .05);
 }
 const SHOT = { pistol: [900, .13, .8], smg: [1300, .09, .6], shotgun: [480, .3, 1.1], rifle: [1000, .15, .85], dmr: [650, .28, 1.1], lmg: [800, .16, .9] };
+let lastTail = 0, lastFlesh = 0;
 function sShot(kind, vol) {
   const P = SHOT[kind] || SHOT.pistol; vol = vol === undefined ? 1 : vol; if (vol < .02) return;
   sNoise(P[0], P[1], P[2] * vol); sNoise(300, .6, .18 * vol); sTone(150, .14, .7 * vol, 'sine', 0, 40); sNoise(5200, .025, .45 * vol, 'highpass');
-  setTimeout(() => { sNoise(P[0] * .45, P[1] * 3, P[2] * vol * .2); sNoise(180, .9, .1 * vol); }, 120);   // the shot coming back off the walls
+  if (AC.currentTime - lastTail > .16) { lastTail = AC.currentTime; setTimeout(() => { sNoise(P[0] * .45, P[1] * 3, P[2] * vol * .2); sNoise(180, .9, .1 * vol); }, 120); }   // the shot coming back off the walls
 }
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 function outNode(pan) { if (pan && AC.createStereoPanner) { const p = AC.createStereoPanner(); p.pan.value = clamp(pan, -1, 1); p.connect(master); return p; } return master; }
@@ -231,7 +232,7 @@ function sGurgle(vol, pan) { const f = rnd(80, 110); if (!clip('groan', vol, pan
 // something forcing its way up through the floor
 function sSpawn(vol, pan) { if (vol < .04) return; sNoise(85, 1.2, vol * .9); sTone(44, .5, vol * .7, 'sine', 0, 26); for (let i = 0; i < 4; i++) setTimeout(() => sNoise(rnd(1500, 2600), rnd(.08, .2), vol * .3, 'bandpass'), 150 + i * rnd(140, 260));
   if (clip('groan', vol, pan, rnd(.45, .55))) return; const f = rnd(48, 62); vox({ f0: f, f1: f * 1.9, f2: f * 1.3, dur: 1.3, vol: .8 * vol, pan, v0: 'u', v1: 'a', rat: 1, ratf: 16, ratEnd: 2.4, breath: .6, att: .5, shift: .8, when: .25 }); }
-function sFlesh(head) { sNoise(650, .08, .55, 'bandpass'); sNoise(1900, .05, .22, 'bandpass'); sTone(105, .08, .55, 'sine', 0, 45); if (head) sCrack(.6); }
+function sFlesh(head) { if (!AC || AC.currentTime - lastFlesh < .06) return; lastFlesh = AC.currentTime; sNoise(650, .08, .55, 'bandpass'); sNoise(1900, .05, .22, 'bandpass'); sTone(105, .08, .55, 'sine', 0, 45); if (head) sCrack(.6); }
 function sHurt() { sTone(72, .2, .85, 'sine', 0, 34); sNoise(950, .18, .5, 'bandpass'); sNoise(300, .12, .5); sTone(3300, 1.1, .025, 'sine');
   vox({ f0: rnd(140, 170), f1: 120, f2: 95, dur: .38, vol: .45, pan: 0, v0: 'a', v1: 'o', breath: .6, fry: .1, att: .02, jit: .03 }); }
 // a far-off siren winding up and down, and the mains dying
@@ -408,6 +409,7 @@ const KITS = {
   lantern: K => { K.c(.05, .07, 2.3, 0, 1.15, 0, 0x2a2118, 6).b(.05, .05, .55, 0, 2.22, .24, 0x2a2118).b(.02, .14, .02, 0, 2.12, .45, 0x121212).b(.2, .04, .2, 0, 2.04, .45, 0x151515).b(.17, .04, .17, 0, 1.72, .45, 0x151515).c(.02, .06, .08, 0, 2.1, .45, 0x151515, 6);
     for (const a of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) K.b(.015, .3, .015, a[0] * .075, 1.88, .45 + a[1] * .075, 0x151515); },
   barrier: K => K.b(.62, .28, 2.96, 0, .14, 0, 0x6f7173).b(.44, .34, 2.96, 0, .45, 0, 0x7c7e80).b(.26, .42, 2.96, 0, .83, 0, 0x858789).b(.63, .12, .6, 0, .2, .8, 0x8a5a20).b(.63, .12, .6, 0, .2, -.8, 0x8a5a20).b(.3, .06, .2, 0, 1.06, 0, 0x55575a),
+  pineL: K => { K.c(.1, .2, 2.6, 0, 1.3, 0, 0x241a12, 6); for (let i = 0; i < 5; i++) { const r = 1.75 - i * .32, y = 1.9 + i * 1.05; K.g(new THREE.ConeGeometry(r, 1.7, 7), M(0, y + .85, 0, 0, i * .7, 0), i % 2 ? 0x15231a : 0x1a2b1f).g(new THREE.ConeGeometry(r * .78, .9, 7), M(0, y + 1.32, 0, 0, i * .7 + .3, 0), 0x8e9aac); } },   // light version for the wall of forest round the edge
   pine: K => { K.c(.07, .2, 3.2, 0, 1.6, 0, 0x241a12, 7).c(.2, .3, .35, 0, .17, 0, 0x1e150e, 7);
     for (let i = 0; i < 5; i++) { const a = i * 1.26; K.seg(.07, .02, [Math.cos(a) * .16, .2, Math.sin(a) * .16], [Math.cos(a) * .5, -.05, Math.sin(a) * .5], 0x1e150e, 5); }   // roots
     for (let i = 0; i < 3; i++) { const a = i * 2.3 + .5, y = .9 + i * .4; K.seg(.025, .008, [0, y, 0], [Math.cos(a) * .55, y - .12, Math.sin(a) * .55], 0x1a130d, 4); }   // dead lower stubs
@@ -529,7 +531,7 @@ Object.assign(KITS, {
   stake: K => K.c(.03, .045, 1.9, 0, .95, 0, 0x3a2c1e, 6).s(.1, 0, 1.92, 0, 0xc4bca2, 1, .95, 1.1).b(.1, .05, .08, 0, 1.85, .06, 0xb4ac92).b(.03, .03, .01, -.035, 1.93, .1, 0x0a0a0a).b(.03, .03, .01, .035, 1.93, .1, 0x0a0a0a).c(.035, .04, .5, 0, 1.55, 0, 0x2a0605, 6),
   rotor: K => K.b(11, .04, .34, 0, 0, 0, 0x151515).b(.34, .04, 11, 0, 0, 0, 0x151515).c(.16, .16, .2, 0, 0, 0, 0x2a2c2e, 8)
 });
-const METAL = { car: 1, van: 1, lamp: 1, rail: 1, dumpster: 1, locker: 1, barrel: 1, pump: 1, truck: 1, tlight: 1, gantry: 1, acunit: 1, mailbox: 1, heli: 1 }, NOSHADOW = { drift: 1, deb: 1, pool: 1 };
+const METAL = { car: 1, van: 1, lamp: 1, rail: 1, dumpster: 1, locker: 1, barrel: 1, pump: 1, truck: 1, tlight: 1, gantry: 1, acunit: 1, mailbox: 1, heli: 1 }, NOSHADOW = { drift: 1, deb: 1, pool: 1, pineL: 1, papers: 1 };
 function kitGeo(name) { if (!KGEO[name]) { const K = Kit(); KITS[name](K); const g = K.done(); g.userData.keep = true; KGEO[name] = g; } return KGEO[name]; }
 function wallGeo(kind) {
   const key = 'w_' + kind; if (KGEO[key]) return KGEO[key];
@@ -733,6 +735,24 @@ function objectives(G, crates, noZone) {
 }
 const CARCOL = [0x6a1f1c, 0x26384e, 0x8a8c8a, 0x2c2e30, 0x7a6a44, 0x39503c, 0xa8a69c, 0x4a2c50];
 function addCar(G, c, r, ry) { const burnt = LR() < .24; G.add('car', c, r, { ry, van: LR() < .22, col: burnt ? 0x1a1612 : CARCOL[lpick(CARCOL.length)], fire: burnt && LR() < .45, tilt: burnt ? lr(-.06, .06) : 0, sink: burnt }); }
+// two-storey lookout: a small house with stairs inside, up to a walled roof you can shoot down from
+function lookout(G, c0, r0, door, wall) {
+  const c1 = c0 + 6, r1 = r0 + 5, A = r0 + 1, s = c0 + 2, L0 = G.layers[0]; while (G.layers.length < 2) G.addLayer(); const L1 = G.layers[1];
+  for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) { const edge = r === r0 || r === r1 || c === c0 || c === c1; L0[r][c] = edge ? wall : '.'; L1[r][c] = edge ? 'p' : ','; }
+  L0[A][s] = '1'; L0[A][s + 1] = '2'; L0[A + 1][s] = L0[A + 1][s + 1] = '#'; L1[A][s] = 'x'; L1[A][s + 1] = 'v'; L1[A + 1][s] = L1[A + 1][s + 1] = 'p';
+  const d = door === 'w' ? [c0, r0 + 3] : door === 'e' ? [c1, r0 + 3] : [c0 + 4, r1]; L0[d[1]][d[0]] = '.';
+  for (let r = r0 - 1; r <= r1 + 1; r++) for (let c = c0 - 1; c <= c1 + 1; c++) G.reserve(c, r, 0);
+  G.props.push({ k: 'light', c: c0 + 4, r: r0 + 3, m: 1 }, { k: 'exit', x: wx(d[0]), z: wx(d[1]) }, { k: 'box', c: c0 + 1, r: r0 + 4, dx: -1, dz: 0 }, { k: 'shelf', c: c0 + 5, r: r0 + 2, dx: 1, dz: 0 },
+    { k: 'abox', x: wx(c0 + 5), z: wx(r0 + 4) + .9, l: 1, ry: 1 }, { k: 'sandbag', c: c0 + 5, r: r0 + 2, l: 1, dx: 1, dz: 0 }, { k: 'stack', c: c0 + 1, r: r0 + 4, l: 1, dx: -1, dz: 0 });
+}
+// plain one-room cabin with a pitched roof
+function cabin(G, c0, r0, door) {
+  const c1 = c0 + 5, r1 = r0 + 4; G.frame(c0, r0, c1, r1, '#'); G.rect(c0 + 1, r0 + 1, c1 - 1, r1 - 1, '.');
+  const d = door === 'w' ? [c0, r0 + 2] : door === 'e' ? [c1, r0 + 2] : [c0 + 2, r1]; G.set(d[0], d[1], '.');
+  for (let r = r0 - 1; r <= r1 + 1; r++) for (let c = c0 - 1; c <= c1 + 1; c++) G.reserve(c, r, 0);
+  G.props.push({ k: 'light', c: c0 + 3, r: r0 + 2, m: 1 }, { k: 'bed', c: c0 + 1, r: r0 + 1, dx: -1, dz: 0 }, { k: 'shelf', c: c1 - 1, r: r0 + 1, dx: 1, dz: 0 }, { k: 'desk', c: c0 + 3, r: r0 + 1, dx: 0, dz: -1 },
+    { k: 'abox', x: wx(c1 - 1), z: wx(r1 - 1) + .8, ry: .6 }, { k: 'roof', x: (wx(c0) + wx(c1)) / 2, z: (wx(r0) + wx(r1)) / 2, sx: 6 * TILE + 1.2, sz: 5 * TILE + 1.2, h: 2.4 });
+}
 function genWard() {
   const A = [
     '############################', '#S...o#S...........#,,,,,,s#', '#.....#.....L......#,t,,,,,#', '#..L..a............b,,,,,,,#', '#.....#....##......#,,,M,,,#',
@@ -754,7 +774,7 @@ function genWard() {
   return G;
 }
 function genWoods() {
-  const n = 60, m = n - 1, G = Gen(n, n, ','), g = G.g;
+  const n = 76, m = n - 1, G = Gen(n, n, ','), g = G.g;
   for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (c < 2 || r < 2 || c > m - 2 || r > m - 2) g[r][c] = 'T';
   for (let i = 0; i < 70; i++) { const k = 2 + lpick(n - 4), s = lpick(4); G.set(s === 0 ? 2 : s === 1 ? m - 2 : k, s === 2 ? 2 : s === 3 ? m - 2 : k, 'T'); }
   G.spawn = { c: 23, r: 29 }; G.reserve(23, 29, 2);
@@ -777,10 +797,13 @@ function genWoods() {
   G.deco({ k: 'fire', x: wx(23) + 2.6, z: wx(29) - 2.6 });
   for (const q of [[5, 5], [23, 4], [40, 5], [4, 23], [41, 22], [5, 40], [23, 41], [40, 40], [13, 14], [33, 30], [12, 28], [32, 17], [16, 38], [36, 36], [54, 6], [54, 30], [54, 53], [30, 54], [8, 54], [50, 42], [28, 48], [52, 18]]) { G.set(q[0], q[1], ','); G.add('zs', q[0], q[1]); G.reserve(q[0], q[1], 1); }
   G.add('car', 14, 23, { ry: .6, col: 0x39503c, sink: true }); G.reserve(14, 23, 1); G.add('car', 31, 38, { ry: 2.3, van: true, col: 0x8a8c8a }); G.reserve(31, 38, 1); G.add('car', 40, 50, { ry: 1.1, col: 0x6a1f1c, sink: true }); G.reserve(40, 50, 1);
-  objectives(G, 2);
-  G.loose(['box', 'stack', 'barrel', 'pallet', 'sandbag', 'box', 'stack'], 70, ch => ch === ',');
-  for (let i = 0, k = 0; i < 700 && k < 40; i++) { const c = 4 + lpick(n - 8), r = 4 + lpick(n - 8); if (!G.ring(c, r)) continue; g[r][c] = 'R'; G.reserve(c, r, 1); k++; }
-  for (let r = 2; r < n - 2; r++) for (let c = 2; c < n - 2; c++) { if (g[r][c] !== ',' || !G.free(c, r) || LR() > .34) continue; const a = lr(0, 6.28), d = lr(.75, 1.15);
+  // lookouts you can climb, more cabins further out, and more places for them to come from
+  lookout(G, 28, 40, 's', '#'); lookout(G, 62, 10, 's', '#'); lookout(G, 10, 62, 'e', '#'); lookout(G, 60, 60, 'w', '#'); cabin(G, 64, 36, 's'); cabin(G, 36, 64, 'e');
+  for (const q of [[66, 5], [70, 24], [66, 46], [70, 70], [48, 70], [24, 70], [5, 66], [58, 22], [20, 58], [44, 58]]) { G.set(q[0], q[1], ','); G.add('zs', q[0], q[1]); G.reserve(q[0], q[1], 1); }
+  objectives(G, 3);
+  G.loose(['box', 'stack', 'barrel', 'pallet', 'sandbag', 'box', 'stack'], 100, ch => ch === ',');
+  for (let i = 0, k = 0; i < 900 && k < 60; i++) { const c = 4 + lpick(n - 8), r = 4 + lpick(n - 8); if (!G.ring(c, r)) continue; g[r][c] = 'R'; G.reserve(c, r, 1); k++; }
+  for (let r = 2; r < n - 2; r++) for (let c = 2; c < n - 2; c++) { if (g[r][c] !== ',' || !G.free(c, r) || LR() > .3) continue; const a = lr(0, 6.28), d = lr(.75, 1.15);
     G.deco({ k: LR() < .78 ? 'pine' : 'dtree', x: wx(c) + Math.cos(a) * d, z: wx(r) + Math.sin(a) * d, s: lr(.8, 1.4), ry: lr(0, 6) }); }
   const snow = ch => ch === ','; G.scatter('log', 46, snow); G.scatter('stump', 60, snow); G.scatter('drift', 280, snow); G.scatter('deb', 150, snow); G.scatter('deb', 30, ch => ch === '.');
   G.scatter('pool', 40, ch => true); G.scatter('bodybag', 14, snow); G.scatter('hang', 3, ch => ch === '.');
@@ -812,7 +835,7 @@ function genBack() {
   return G;
 }
 function genHighway() {
-  const w = 21, h = 120, e = h - 2, near = 80, far = 40, gs = 59, G = Gen(w, h, '#'), g = G.g;
+  const w = 21, h = 150, e = h - 2, near = 80, far = 40, gs = 59, G = Gen(w, h, '#'), g = G.g;
   for (let r = 0; r < e; r++) { g[r][0] = g[r][1] = 'R'; if (r < 2) { for (let c = 2; c <= 12; c++) g[r][c] = 'R'; continue; }
     g[r][2] = g[r][3] = g[r][11] = g[r][12] = ','; for (let c = 4; c <= 10; c++) g[r][c] = '='; if (r % 8 < 6) g[r][7] = 'J'; }
   for (let c = 2; c <= 12; c++) { g[far][c] = '#'; g[near][c] = '#'; }
@@ -826,6 +849,8 @@ function genHighway() {
   G.spawn = { c: 5, r: h - 6 }; G.reserve(5, h - 6, 2); for (const q of [[5, far], [6, far], [9, near], [10, near]]) G.reserve(q[0], q[1], 2);
   G.add('ammo', 12, h - 16); G.add('crate', 12, 10); G.reserve(12, 10, 1); G.reserve(12, h - 16, 1);
   for (const q of [[2, 84], [12, 86], [3, 116], [2, 100], [11, 95], [9, 83], [2, 108], [2, 44], [12, 44], [2, 70], [12, 74], [3, 60], [9, 43], [2, 52], [12, 66], [2, 4], [12, 4], [2, 20], [12, 24], [6, 3], [9, 14], [2, 34], [12, 36]]) G.add('zs', q[0], q[1]);
+  const nr = {}; for (const r0 of [15, 95, 124]) { lookout(G, 13, r0, 'w', '#'); nr[r0 + 2] = nr[r0 + 3] = nr[r0 + 4] = 1; }   // roadside lookouts over the carriageway
+  for (const q of [[2, 126], [12, 132], [2, 138], [12, 122]]) G.add('zs', q[0], q[1]);
   const carAt = new Uint8Array(w * h);
   for (const q of [[5, 100, Math.PI], [9, 68, 0], [5, 50, Math.PI], [9, 24, 0], [5, 12, Math.PI]]) { G.deco({ k: 'truck', c: q[0], r: q[1], ry: q[2], col: CARCOL[lpick(CARCOL.length)] }); G.reserve(q[0], q[1], 2); for (let y = -2; y <= 2; y++) carAt[(q[1] + y) * w + q[0]] = 1; }
   objectives(G, 2);
@@ -833,17 +858,17 @@ function genHighway() {
     let ok = true; for (let y = -1; y <= 1; y++) for (let x = -1; x <= 1; x++) if (carAt[(r + y) * w + c + x]) ok = false; if (!ok) continue;
     carAt[r * w + c] = 1; addCar(G, c, r, LR() < .2 ? lr(0, 6.28) : (c < 7 ? Math.PI : 0) + lr(-.35, .35)); }
   for (let r = 4; r < e - 1; r += 6) { const ea = (r / 6 | 0) % 2; if (ea && r >= gs - 6 && r <= gs + 6) continue; G.deco({ k: 'lamp', x: ea ? wx(12) + 1.0 : wx(2) - 1.0, z: wx(r), ry: ea ? -Math.PI / 2 : Math.PI / 2, lit: LR() < .45 }); }
-  for (let r = 2; r < e; r++) { if (LR() < .85) G.deco({ k: 'rail', x: 6.4, z: wx(r), ry: 0 }); if (LR() < .85 && (r < gs - 5 || r > gs + 5)) G.deco({ k: 'rail', x: 38.6, z: wx(r), ry: Math.PI });
+  for (let r = 2; r < e; r++) { if (LR() < .85) G.deco({ k: 'rail', x: 6.4, z: wx(r), ry: 0 }); if (LR() < .85 && (r < gs - 5 || r > gs + 5) && !nr[r]) G.deco({ k: 'rail', x: 38.6, z: wx(r), ry: Math.PI });
     if (r % 2 === 0 && r !== far && r !== near) for (const x of [15, 18, 27, 30]) G.deco({ k: 'dash', x, z: wx(r) }); }
   for (const x of [12.2, 20.8, 24.2, 32.8]) G.deco({ k: 'slab', x, y: .012, z: h * 1.5, sx: .14, sy: .02, sz: h * 3 - 14, col: 0x8a8778 });
-  for (const r of [96, 64, 28, 108, 16]) G.deco({ k: 'gantry', x: 22.5, z: wx(r) + 1.4 });
+  for (const r of [96, 64, 28, 108, 16, 128, 142]) G.deco({ k: 'gantry', x: 22.5, z: wx(r) + 1.4 });
   const dirt = ch => ch === ','; G.clutter(['barrel', 'box', 'tyres', 'dumpster', 'tyres', 'bags', 'stack', 'sandbag', 'pallet', 'stack'], 70, dirt); G.loose(['box', 'stack', 'barrel', 'pallet', 'sandbag', 'tyres', 'box'], 70, ch => ch === ',' || ch === '=');
   G.scatter('dtree', 34, dirt, { s: 1 }); G.scatter('sign', 14, dirt); G.scatter('deb', 360, ch => ch !== '#'); G.scatter('rubble', 36, ch => ch !== '#'); G.scatter('cone', 24, ch => ch === '='); G.scatter('bodybag', 10, ch => ch === '=');
   G.scatter('pool', 70, ch => true); G.scatter('hang', 2, ch => ch === '.');
   return G;
 }
 function genCity() {
-  const NB = 6, n = NB * 12 + 2, m = n - 1, G = Gen(n, n, '='), g = G.g, bld = G.bld = new Uint8Array(n * n);
+  const NB = 7, n = NB * 12 + 2, m = n - 1, G = Gen(n, n, '='), g = G.g, bld = G.bld = new Uint8Array(n * n);
   G.frame(0, 0, m, m, 'B'); for (let i = 0; i < n; i++) bld[i] = bld[m * n + i] = bld[i * n] = bld[i * n + m] = 6;
   const building = (c0, r0, c1, r1, fl, ruin, lock, side) => {
     G.frame(c0, r0, c1, r1, 'B'); G.rect(c0 + 1, r0 + 1, c1 - 1, r1 - 1, '.'); for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) bld[r * n + c] = fl;
@@ -919,13 +944,13 @@ const MAPS = {
   ward: { name: 'Hollow Ward', desc: 'Abandoned hospital', seed: 101, gen: genWard,
     doors: { a: { cost: 750, name: 'the West Ward' }, b: { cost: 1250, name: 'the Courtyard' }, c: { cost: 1000, name: 'the South Hall' }, d: { cost: 1250, name: 'the Morgue' }, e: { cost: 1000, name: 'the Service Corridor' }, f: { cost: 1000, name: 'the Morgue Passage' } },
     theme: { fog: 0x020305, dens: .068, hemi: [0x31405c, 0x0a0a08, .11], sun: null, wall: ['wallA', 'wallB'], wk: 'in', floor: 'floor', ceil: 'ceil', ground: 'ground', road: 'asphalt', deb: 0x6a6a62, rock: 0x55585a, light: 0xd9e2b0 } },
-  woods: { name: 'Winter Woods', desc: 'Snowed-in forest, cabin and camp', seed: 4242, gen: genWoods,
+  woods: { name: 'Winter Woods', desc: 'Bigger forest: cabins, camp, lookouts to climb', seed: 4242, gen: genWoods,
     doors: { a: { cost: 750, name: 'the Cabin' }, b: { cost: 1250, name: 'the Shed' } },
     theme: { fog: 0x080d15, dens: .05, hemi: [0x7088b4, 0x1a1e28, .26], sun: [0x8fa8d8, .16], wall: ['plank', 'plank'], wk: 'plank', floor: 'woodfloor', ceil: 'woodfloor', ground: 'snow', road: 'snow', deb: 0xaab4c4, rock: 0x70767e, light: 0xffc880, weather: 'snow' } },
   back: { name: 'The Back Rooms', desc: 'Endless yellow maze, nine sections', seed: 777, gen: genBack,
     doors: { a: { cost: 750, name: 'the North Rooms' }, b: { cost: 750, name: 'the South Rooms' }, c: { cost: 1000, name: 'the West Rooms' }, d: { cost: 1000, name: 'the East Rooms' }, e: { cost: 1500, name: 'the Corner Rooms (all four ways in)' }, f: { cost: 1500, name: 'the Corner Rooms (all four ways in)' } },
     theme: { fog: 0x090804, dens: .055, hemi: [0x8a8040, 0x2a2610, .16], sun: null, wall: ['paper', 'paper'], wk: 'in', floor: 'carpet', ceil: 'ctile', ground: 'carpet', road: 'carpet', deb: 0x6a6238, rock: 0x55585a, light: 0xfff0a8, panel: true } },
-  highway: { name: 'Dead Highway', desc: 'Long ruined road, wrecks and trucks', seed: 9090, gen: genHighway,
+  highway: { name: 'Dead Highway', desc: 'Longer ruined road, wrecks, roadside lookouts', seed: 9090, gen: genHighway,
     doors: { a: { cost: 750, name: 'the Checkpoint' }, b: { cost: 1250, name: 'the Overpass' }, c: { cost: 1000, name: 'the Gas Station' } },
     theme: { fog: 0x0c0705, dens: .034, hemi: [0x8a6a5a, 0x1a1410, .3], sun: [0xd88050, .2], wall: ['concrete', 'concrete'], wk: 'rib', floor: 'floor', ceil: 'ceil', ground: 'dirt', road: 'asphalt', deb: 0x4a4a48, rock: 0x4a4440, light: 0xffb060, weather: 'ember' } },
   city: { name: 'Broken City', desc: 'Huge city. Climb the tower and extract from the roof', seed: 31337, gen: genCity,
@@ -947,6 +972,21 @@ function tileMesh(l, list, y, up, mat, uvS) {
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   const m = new THREE.Mesh(g, mat); m.receiveShadow = true; return m;
+}
+// The level's walls and props are split into square patches so that only the ones near you and on screen are drawn.
+const NORAY = { pine: 1, pineL: 1, dtree: 1, deb: 1, papers: 1, bones: 1, pool: 1, drift: 1, chain: 1, candle: 1, rubble: 1 };   // foliage and litter: bullets pass through, which keeps shots cheap
+const chunks = [], CHK = 36, _fr = new THREE.Frustum(), _pm = new THREE.Matrix4();
+function instChunks(list, posOf, make) {
+  const by = {}; for (const p of list) { const q = posOf(p), k = q[2] ? 'big' : Math.floor(q[0] / CHK) + ',' + Math.floor(q[1] / CHK); (by[k] = by[k] || []).push(p); }
+  for (const k in by) { const a = k.split(','), m = make(by[k]); m.frustumCulled = false;
+    if (m.userData.noRay) m.raycast = () => {}; else if (k !== 'big') { const cen = new THREE.Vector3((+a[0] + .5) * CHK, 8, (+a[1] + .5) * CHK), R = CHK * .71 + 15;   // bullets only test the patches their path actually crosses
+      m.raycast = function (rc, hits) { if (rc.ray.distanceSqToPoint(cen) > R * R || rc.ray.origin.distanceTo(cen) > rc.far + R) return; THREE.InstancedMesh.prototype.raycast.call(this, rc, hits); }; }
+    chunks.push({ m, s: k === 'big' ? new THREE.Sphere(new THREE.Vector3(camera.position.x, 0, camera.position.z), 1e5) : new THREE.Sphere(new THREE.Vector3((+a[0] + .5) * CHK, 8, (+a[1] + .5) * CHK), CHK * .71 + 15) }); }
+}
+function cullChunks() {
+  camera.updateMatrixWorld(); camera.matrixWorldInverse.copy(camera.matrixWorld).invert(); _pm.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse); _fr.setFromProjectionMatrix(_pm);
+  const far = 2.7 / scene.fog.density, cx = camera.position.x, cz = camera.position.z;   // past this the fog has swallowed everything anyway
+  for (const c of chunks) { const dx = c.s.center.x - cx, dz = c.s.center.z - cz, lim = far + c.s.radius; c.m.visible = dx * dx + dz * dz < lim * lim && _fr.intersectsSphere(c.s); }
 }
 function loadMap(id) {
   const def = MAPS[id] || MAPS.ward; MAPID = MAPS[id] ? id : 'ward';
@@ -975,7 +1015,7 @@ function loadMap(id) {
         if (indoor) { pushF(T.floor, c, r); if (up !== 'x' && up !== 'v') ceil.push([c, r, 1]); } else pushF(ch === '=' || ch === 'J' ? T.road : T.ground, c, r);
         if (isDoor(ch)) addDoor(ch, c, r);
         if (ch === '1') put('stair', x + TILE / 2, y0, z, 0); if (ch === '3') put('stair', x - TILE / 2, y0, z, Math.PI);
-        if (ch === 'T') for (let i = 0, k = 2 + lpick(2); i < k; i++) { const s = lr(1.1, 1.7); put('pine', x + lr(-1.2, 1.2), 0, z + lr(-1.2, 1.2), lr(0, 6), s, s * lr(.9, 1.3), s); }
+        if (ch === 'T') for (let i = 0, k = 2 + lpick(2); i < k; i++) { const s = lr(1.1, 1.7); put('pineL', x + lr(-1.2, 1.2), 0, z + lr(-1.2, 1.2), lr(0, 6), s, s * lr(.9, 1.3), s); }
         if (ch === 'R') put('rock', x + lr(-.3, .3), -.1, z + lr(-.3, .3), lr(0, 6), lr(1.75, 2.15), lr(1.7, 3.4), lr(1.75, 2.15), T.rock);
         if (ch === 'J') put('barrier', x, 0, z, 0);
       }
@@ -991,12 +1031,13 @@ function loadMap(id) {
   if (OBJ.zone) OBJ.list.push({ t: 'hold', n: 40, title: 'Hold the signal point' });
   if (EVAC) OBJ.list.push({ t: 'evac', n: 1, title: 'Climb the tower and extract from the roof' });
   const o = new THREE.Object3D(), tc = new THREE.Color();
-  for (const key in wallQ) { const kk = key.split('|'), list = wallQ[key], m = new THREE.InstancedMesh(wallGeo(kk[1]), texMat(kk[0]), list.length);
-    list.forEach((p, i) => { o.position.set(p[0], p[1], p[2]); o.updateMatrix(); m.setMatrixAt(i, o.matrix); });
-    m.frustumCulled = false; m.receiveShadow = true; m.castShadow = kk[1] !== 'facade'; levelGroup.add(m); if (kk[1] !== 'facade') shootables.push(m); }
-  for (const kind in instQ) { const list = instQ[kind], m = new THREE.InstancedMesh(kitGeo(kind), METAL[kind] ? MAT.vcM : MAT.vc, list.length);
+  chunks.length = 0;
+  for (const key in wallQ) { const kk = key.split('|'), geo = wallGeo(kk[1]), mat = texMat(kk[0]);
+    instChunks(wallQ[key], p => [p[0], p[2]], list => { const m = new THREE.InstancedMesh(geo, mat, list.length); list.forEach((p, i) => { o.position.set(p[0], p[1], p[2]); o.updateMatrix(); m.setMatrixAt(i, o.matrix); });
+      m.receiveShadow = true; m.castShadow = kk[1] !== 'facade'; levelGroup.add(m); if (kk[1] !== 'facade') shootables.push(m); return m; }); }
+  for (const kind in instQ) instChunks(instQ[kind], p => { const e = p[0].elements; return [e[12], e[14], Math.max(Math.hypot(e[0], e[1], e[2]), Math.hypot(e[4], e[5], e[6]), Math.hypot(e[8], e[9], e[10])) > 9]; }, list => { const m = new THREE.InstancedMesh(kitGeo(kind), METAL[kind] ? MAT.vcM : MAT.vc, list.length);
     list.forEach((p, i) => { m.setMatrixAt(i, p[0]); m.setColorAt(i, tc.set(p[1] === undefined ? 0xffffff : p[1]).convertSRGBToLinear()); });
-    m.frustumCulled = false; m.receiveShadow = true; m.castShadow = !NOSHADOW[kind]; propGroup.add(m); }
+    m.receiveShadow = true; m.castShadow = !NOSHADOW[kind]; m.userData.noRay = !!NORAY[kind]; propGroup.add(m); return m; });
   glowMesh = new THREE.InstancedMesh(KGEO.glowBox, MAT.glow, Math.max(1, glowQ.length)); glowMesh.frustumCulled = false;
   if (!glowQ.length) { o.position.set(0, -99, 0); o.updateMatrix(); glowMesh.setMatrixAt(0, o.matrix); glowMesh.setColorAt(0, tc.set(0)); }
   glowQ.forEach((p, i) => { glowMesh.setMatrixAt(i, p[0]); glowMesh.setColorAt(i, tc.set(p[1]).convertSRGBToLinear()); }); levelGroup.add(glowMesh);
@@ -1620,6 +1661,26 @@ function buildFX() {
   dg.setAttribute('position', new THREE.BufferAttribute(dp, 3));
   dust = new THREE.Points(dg, new THREE.PointsMaterial({ size: .022, color: 0x8a8a80, transparent: true, opacity: .3, depthWrite: false })); dust.frustumCulled = false; scene.add(dust);
 }
+const tracers = [], cases = []; let trI = 0, caI = 0, lastTink = 0;
+function buildShots() {
+  const tm = new THREE.MeshBasicMaterial({ color: 0xffd9a0, transparent: true, opacity: .55, blending: THREE.AdditiveBlending, depthWrite: false }), tg = new THREE.BoxGeometry(.012, .012, 1);
+  for (let i = 0; i < 10; i++) { const m = new THREE.Mesh(tg, tm); m.visible = false; m.frustumCulled = false; scene.add(m); tracers.push({ m, t: 0 }); }
+  const cm = new THREE.MeshStandardMaterial({ color: 0xb08a3a, metalness: .9, roughness: .35 }), cg = new THREE.CylinderGeometry(.006, .006, .024, 6);
+  for (let i = 0; i < 24; i++) { const m = new THREE.Mesh(cg, cm); m.visible = false; scene.add(m); cases.push({ m, t: 0, v: new THREE.Vector3(), g: 0, b: 0 }); }
+}
+function tracer(to) {   // a streak from the muzzle to wherever the round went
+  const T = tracers[trI = (trI + 1) % tracers.length], m = T.m; camera.getWorldDirection(_q3); _v2.copy(camera.position).addScaledVector(_q3, .9); _q3.cross(_up).normalize(); _v2.addScaledVector(_q3, .17 * (1 - L.ads)); _v2.y -= .13 * (1 - L.ads) + .04;
+  const len = _v2.distanceTo(to); if (len < 2) return; m.position.copy(_v2).lerp(to, .5); m.lookAt(to); m.scale.set(1, 1, len); m.visible = true; T.t = .05;
+}
+function casing() {   // spent brass thrown out to the right
+  const C = cases[caI = (caI + 1) % cases.length], m = C.m; camera.getWorldDirection(_q3); _v2.copy(camera.position).addScaledVector(_q3, .45); const fx = _q3.x, fz = _q3.z; _q3.cross(_up).normalize(); _v2.addScaledVector(_q3, .2); _v2.y -= .12;
+  m.position.copy(_v2); C.v.copy(_q3).multiplyScalar(rnd(1.6, 2.6)); C.v.y = rnd(1.4, 2.4); C.v.x += fx * rnd(-.4, .4) + L.vx; C.v.z += fz * rnd(-.4, .4) + L.vz; C.t = 2.5; C.g = me.y + .012; C.b = 0; m.rotation.set(rnd(0, 6), rnd(0, 6), rnd(0, 6)); m.visible = true;
+}
+function updateShots(dt) {
+  for (const T of tracers) if (T.t > 0) { T.t -= dt; if (T.t <= 0) T.m.visible = false; }
+  for (const C of cases) { if (C.t <= 0) continue; C.t -= dt; if (C.t <= 0) { C.m.visible = false; continue; } if (C.b > 1) continue; C.v.y -= 9.8 * dt; C.m.position.addScaledVector(C.v, dt); C.m.rotation.x += dt * 14; C.m.rotation.z += dt * 9;
+    if (C.m.position.y <= C.g) { C.m.position.y = C.g; C.b++; C.v.y *= -.35; C.v.x *= .5; C.v.z *= .5; if (C.b > 1) C.m.rotation.set(Math.PI / 2, 0, rnd(0, 6)); else if (AC && AC.currentTime - lastTink > .09) { lastTink = AC.currentTime; sTone(rnd(3200, 4600), .05, .035, 'sine'); } } }
+}
 function burst(pos, n, col, speed, dir) {
   for (let k = 0; k < n; k++) { const i = pIdx = (pIdx + 1) % PN;
     pPos[i * 3] = pos.x; pPos[i * 3 + 1] = pos.y; pPos[i * 3 + 2] = pos.z;
@@ -1633,7 +1694,7 @@ function updateFX(dt) {
   pGeo.attributes.position.needsUpdate = true; pGeo.attributes.color.needsUpdate = true;
   dust.position.set(Math.round(camera.position.x / 12) * 12, 1.8 + Math.sin(G.time * .2) * .3, Math.round(camera.position.z / 12) * 12);
   dust.rotation.y = G.time * .01;
-  updateLights(dt);
+  updateLights(dt); cullChunks(); updateShots(dt);
   { const cur = OBJ.list[G.oi] || {}, bl = Math.sin(G.time * 7) > 0;
     OBJ.gens.forEach((t, i) => t.lamp.material.color.setHex((G.og >> i) & 1 ? 0x30ff50 : bl ? 0xff2010 : 0x400804));
     OBJ.sups.forEach((t, i) => { t.m.visible = cur.t === 'sup' && !((G.om >> i) & 1); t.m.rotation.y += dt * .8; }); if (OBJ.zone) OBJ.zone.m.visible = cur.t === 'hold'; }
@@ -1655,7 +1716,7 @@ function giveWeapon(id) {
 function switchWeapon(i) { if (i === L.wi || !L.weapons[i] || me.down) return; L.wi = i; L.switchT = .35; L.reloadT = 0; L.burstN = 0; me.wid = curW().id; sNoise(2000, .05, .15); }
 function startReload() { const w = curW(), d = WEAPONS[w.id]; if (L.reloadT > 0 || w.ammo >= magOf(w) || w.reserve <= 0) return; L.reloadT = d.reload; sNoise(2500, .06, .25); setTimeout(() => sNoise(1800, .08, .3), d.reload * 700); }
 
-const _v = new THREE.Vector3(), _d = new THREE.Vector3(), _q = new THREE.Quaternion();
+const _v = new THREE.Vector3(), _d = new THREE.Vector3(), _q = new THREE.Quaternion(), _v2 = new THREE.Vector3(), _q3 = new THREE.Vector3();
 function castShot(dir, far) {
   raycaster.set(camera.position, dir); raycaster.far = far;
   const hits = raycaster.intersectObjects(shootables, true);
@@ -1674,7 +1735,7 @@ function fire() {
   let anyHit = false, anyHead = false;
   for (let i = 0; i < d.pellets; i++) {
     camera.getWorldDirection(_d); _d.x += rnd(-sp, sp); _d.y += rnd(-sp, sp); _d.z += rnd(-sp, sp); _d.normalize();
-    const h = castShot(_d, 120); if (!h) continue;
+    const h = castShot(_d, 120); if (i < 4) tracer(h ? h.point : _v.copy(camera.position).addScaledVector(_d, 70)); if (!h) continue;
     const z = h.object.userData.zr;
     if (d.splash) {   // explosive round: everything near the impact is hit, less the further out it is
       burst(h.point, 46, [1, .55, .15], 5); burst(h.point, 22, [.3, .3, .3], 2.5); sNoise(110, .7, 1); sTone(60, .5, .8, 'sine', 0, 30); muzzleLight.intensity = 5;
@@ -1686,6 +1747,7 @@ function fire() {
         m.position.copy(h.point).addScaledVector(_v, .012); m.lookAt(_v.add(m.position)); m.visible = true; } }
   }
   if (anyHit) { L.hitFx = 1; sFlesh(anyHead); }
+  if (w.id !== 'revolver' && w.id !== 'dbl' && w.id !== 'launcher') casing();
   me.pitch = Math.min(1.5, me.pitch + d.kick * (1 - L.ads * .4)); me.yaw += rnd(-1, 1) * d.kick * .2;
   me.fireSeq++; sShot(d.snd || w.id, 1);
   muzzleLight.intensity = 3.2; muzzleFlash.visible = true; muzzleFlash.rotation.z = rnd(0, 6); muzzleFlash.scale.setScalar(rnd(.8, 1.4) * (d.pellets > 1 ? 1.6 : 1));
@@ -2201,8 +2263,8 @@ addEventListener('beforeunload', () => { try { if (Net.peer) Net.peer.destroy();
 function init() {
   if (typeof THREE === 'undefined') { status('Could not load the 3D engine. Check your internet connection and reload.'); return; }
   renderer = new THREE.WebGLRenderer({ canvas: $('c'), antialias: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5)); renderer.setSize(innerWidth, innerHeight);
-  renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  maxPR = Math.min(devicePixelRatio || 1, 2); curPR = Math.min(maxPR, 1.5); renderer.setPixelRatio(curPR); renderer.setSize(innerWidth, innerHeight);
+  renderer.shadowMap.enabled = true; renderer.shadowMap.autoUpdate = false; renderer.info.autoReset = false; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.07; renderer.outputEncoding = THREE.sRGBEncoding; renderer.autoClear = false;
   scene = new THREE.Scene(); scene.background = new THREE.Color(0x04060a); scene.fog = new THREE.FogExp2(0x04060a, .055);
   camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, .05, 200); camera.rotation.order = 'YXZ'; scene.add(camera);
@@ -2213,7 +2275,7 @@ function init() {
   muzzleLight = new THREE.PointLight(0xffc070, 0, 16, 1.5); muzzleLight.position.set(0, 0, -1); camera.add(muzzleLight);
   remoteFlash = new THREE.PointLight(0xffc070, 0, 14, 1.5); scene.add(remoteFlash);
   zGroup = new THREE.Group(); scene.add(zGroup);
-  initGeo(); initLevelMats(); buildWeaponScene(); buildFX(); loadMap('ward');
+  initGeo(); initLevelMats(); buildWeaponScene(); buildFX(); buildShots(); loadMap('ward');
   // film grain
   const gc = document.createElement('canvas'); gc.width = gc.height = 128; const gg = gc.getContext('2d'), gd = gg.createImageData(128, 128);
   for (let i = 0; i < gd.data.length; i += 4) { const v = Math.random() * 255; gd.data[i] = gd.data[i + 1] = gd.data[i + 2] = v; gd.data[i + 3] = 255; } gg.putImageData(gd, 0, 0);
@@ -2246,10 +2308,10 @@ function init() {
     b.innerHTML = '<i style="background:linear-gradient(180deg,' + hx(S.hat === 'bare' ? 0x3a2c22 : S.head) + ' 0 28%,' + hx(S.vest) + ' 28% 62%,' + hx(S.cloth) + ' 62% 76%,' + hx(S.pants) + ' 76%)"></i><b>' + S.name + '</b>';
     b.onclick = () => { if (G.started) return; L.skin = i; try { localStorage.setItem('hwSkin', i); } catch (e) {} document.querySelectorAll('.skbtn').forEach(x => x.classList.remove('sel')); b.classList.add('sel'); }; $('skins').appendChild(b); });
   const jq = new URLSearchParams(location.search).get('join'); if (jq) { $('joincode').value = jq.toUpperCase().slice(0, 5); status('Invite code filled in — press Join game.'); }
-  window.HW = { zbuf, snd: { sGroan, sSnarl, sScream, sHiss, sGurgle, sSpawn, sFlesh, sHurt, sSiren, sPowerDown }, ghost, ambush, scareFace, SKINS, musicState: () => ({ tension, mNext, on: musicOn, ok: !!musicG }), hostBuy, obj: () => OBJ, killZombie, G, players, zombies, L, Net, MAPS, loadMap, hostHit, spawnZombie, drops, fire, melee, dealHit, camera: () => camera, WEAPONS, giveWeapon, navStep, groundY, tileL, moveCollide, map: () => ({ MAP, LAYERS, NL, EVAC, W, H, id: MAPID, spawn: SPAWN, zSpawns, colliders, lightSpots, interactables, navBlock, flow }) };
+  window.HW = { chunks, perf: () => ({ pr: curPR, ms: frameMs, tris: renderer.info.render.triangles, calls: renderer.info.render.calls }), zbuf, snd: { sGroan, sSnarl, sScream, sHiss, sGurgle, sSpawn, sFlesh, sHurt, sSiren, sPowerDown }, ghost, ambush, scareFace, SKINS, musicState: () => ({ tension, mNext, on: musicOn, ok: !!musicG }), hostBuy, obj: () => OBJ, killZombie, G, players, zombies, L, Net, MAPS, loadMap, hostHit, spawnZombie, drops, fire, melee, dealHit, camera: () => camera, WEAPONS, giveWeapon, navStep, groundY, tileL, moveCollide, map: () => ({ MAP, LAYERS, NL, EVAC, W, H, id: MAPID, spawn: SPAWN, zSpawns, colliders, lightSpots, interactables, navBlock, flow }) };
   frame();
 }
-let lastFrame = 0, lastTick = 0;
+let lastFrame = 0, lastTick = 0, frameN = 0, frameMs = 16, prT = 0, maxPR = 2, curPR = 1.5;
 // keep the simulation alive when the tab is in the background (so a host who tabs away does not freeze everyone)
 setInterval(() => {
   const now = performance.now(); if (!G.started || now - lastFrame < 250) { lastTick = now; return; }
@@ -2263,6 +2325,9 @@ function frame() {
     do { const dt = Math.min(rem, .05); rem -= dt; tot += dt; G.time += dt; updateLocal(dt); if (G.host) hostUpdate(dt); else clientUpdate(dt); updateViews(dt); } while (rem > .002);
     updateFX(tot); updateHUD(tot);
   }
+  renderer.info.reset(); renderer.shadowMap.needsUpdate = (frameN++ & 1) === 0;   // the torch's shadows are redrawn every other frame
+  { const now = performance.now(), ms = now - (frame.last || now); frame.last = now; if (ms < 200) { frameMs += (ms - frameMs) * .05; if (now - prT > 1500 && !document.hidden) { prT = now;   // trade sharpness for smoothness when the frame rate drops
+      const want = frameMs > 23 ? Math.max(.75, curPR - .15) : frameMs < 14.5 ? Math.min(maxPR, curPR + .1) : curPR; if (Math.abs(want - curPR) > .01) { curPR = want; renderer.setPixelRatio(curPR); } } } }
   renderer.clear(); renderer.render(scene, camera);
   if (G.started && me && !me.down) { renderer.clearDepth(); renderer.render(wscene, wcam); }
 }
