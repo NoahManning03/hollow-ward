@@ -155,7 +155,7 @@ function initAudio() {
     const hw = AC.createOscillator(); hw.frequency.value = 1870; const hwl = AC.createOscillator(); hwl.frequency.value = .07; const hwlg = AC.createGain(); hwlg.gain.value = 60; hwl.connect(hwlg).connect(hw.frequency); hwl.start();
     const hwg = AC.createGain(); hwg.gain.value = .0035; hw.connect(hwg).connect(master); hw.start();
     shaper = AC.createWaveShaper(); const cv = new Float32Array(256); for (let i = 0; i < 256; i++) { const x = i / 128 - 1; cv[i] = Math.tanh(x * 5); } shaper.curve = cv;
-    initMusic();
+    initMusic(); loadClips();
   } catch (e) { AC = null; }
 }
 function sNoise(freq, dur, vol, type) {
@@ -213,15 +213,24 @@ function vox(o) {
   g.connect(outNode(o.pan));
 }
 const vpick = s => s[(Math.random() * s.length) | 0];
-function sGroan(vol, pan) { const f = rnd(60, 96); vox({ f0: f, f1: f * rnd(1.05, 1.3), f2: f * rnd(.6, .8), dur: rnd(1.3, 2.6), vol: .8 * vol, pan, v0: vpick('uor'), v1: vpick('ao'), rat: rnd(.5, .9), ratf: rnd(20, 34), jit: .05, breath: .3, shift: rnd(.78, 1), att: .25 }); }
-function sSnarl(vol, pan) { const f = rnd(105, 150); vox({ f0: f, f1: f * 1.6, f2: f * .7, dur: rnd(.4, .65), vol: vol, pan, v0: 'e', v1: 'a', rat: 1, ratf: rnd(40, 55), jit: .08, breath: .7, drive: 1, att: .02, shift: rnd(.85, 1) }); sNoise(2400, .12, vol * .25, 'bandpass'); }
-function sScream(vol, pan) { const f = rnd(250, 360); vox({ f0: f, f1: f * rnd(1.4, 1.8), f2: f * .7, dur: rnd(.8, 1.4), vol: .75 * vol, pan, v0: 'a', v1: 'e', rat: .8, ratf: rnd(50, 70), ratEnd: 1.2, jit: .12, breath: .55, drive: 1, att: .04, fry: .3, shift: rnd(.95, 1.15) }); }
+// Recorded zombie voices (snd/README.txt has the source and licence). Sorted by ear-free measurements: long slow ones are moans,
+// short sharp ones are attack snarls, bright raspy ones are shrieks. Until they load, or if they fail to, the synth voices below are used.
+const ZS = { groan: [16, 17, 18, 21, 15, 20, 2, 1, 23, 22], snarl: [4, 5, 6, 24, 3, 7], scream: [9, 11, 12, 13, 10, 19, 8, 14] }, zbuf = {};
+function loadClips() { if (!AC || !window.fetch) return; for (let i = 1; i <= 24; i++) fetch('snd/z' + i + '.mp3').then(r => r.ok ? r.arrayBuffer() : null).then(b => { if (b) AC.decodeAudioData(b, buf => { zbuf[i] = buf; }, () => {}); }).catch(() => {}); }
+function clip(kind, vol, pan, rate) {
+  if (!AC) return false; const ids = ZS[kind].filter(i => zbuf[i]); if (!ids.length) return false; if (vol < .02) return true;
+  const src = AC.createBufferSource(), g = AC.createGain(); src.buffer = zbuf[ids[(Math.random() * ids.length) | 0]]; src.playbackRate.value = rate * rnd(.93, 1.07); g.gain.value = Math.min(1.4, vol);
+  src.connect(g); g.connect(outNode(pan)); if (echoIn) { const e = AC.createGain(); e.gain.value = .22; g.connect(e); e.connect(echoIn); } src.start(); return true;
+}
+function sGroan(vol, pan) { if (clip('groan', vol * 1.1, pan, rnd(.68, 1))) return; const f = rnd(60, 96); vox({ f0: f, f1: f * rnd(1.05, 1.3), f2: f * rnd(.6, .8), dur: rnd(1.3, 2.6), vol: .8 * vol, pan, v0: vpick('uor'), v1: vpick('ao'), rat: rnd(.5, .9), ratf: rnd(20, 34), jit: .05, breath: .3, shift: rnd(.78, 1), att: .25 }); }
+function sSnarl(vol, pan) { if (clip('snarl', vol * 1.2, pan, rnd(.88, 1.1))) return; const f = rnd(105, 150); vox({ f0: f, f1: f * 1.6, f2: f * .7, dur: rnd(.4, .65), vol: vol, pan, v0: 'e', v1: 'a', rat: 1, ratf: rnd(40, 55), jit: .08, breath: .7, drive: 1, att: .02, shift: rnd(.85, 1) }); sNoise(2400, .12, vol * .25, 'bandpass'); }
+function sScream(vol, pan) { if (clip('scream', vol * 1.1, pan, rnd(.95, 1.2))) return; const f = rnd(250, 360); vox({ f0: f, f1: f * rnd(1.4, 1.8), f2: f * .7, dur: rnd(.8, 1.4), vol: .75 * vol, pan, v0: 'a', v1: 'e', rat: .8, ratf: rnd(50, 70), ratEnd: 1.2, jit: .12, breath: .55, drive: 1, att: .04, fry: .3, shift: rnd(.95, 1.15) }); }
 function sHiss(vol, pan) { vox({ f0: 70, dur: rnd(.9, 1.6), vol: .5 * vol, pan, v0: 'e', v1: 'r', rat: .9, ratf: rnd(30, 60), breath: 2.2, fry: .15, att: .2, shift: 1.2 }); }
-function sGurgle(vol, pan) { const f = rnd(80, 110); vox({ f0: f, f1: f * .8, f2: f * .45, dur: rnd(.9, 1.5), vol: .8 * vol, pan, v0: 'o', v1: 'u', rat: 1, ratf: 20, ratEnd: .25, jit: .07, breath: .6, att: .03, shift: .85 });
+function sGurgle(vol, pan) { const f = rnd(80, 110); if (!clip('groan', vol, pan, rnd(.52, .68))) vox({ f0: f, f1: f * .8, f2: f * .45, dur: rnd(.9, 1.5), vol: .8 * vol, pan, v0: 'o', v1: 'u', rat: 1, ratf: 20, ratEnd: .25, jit: .07, breath: .6, att: .03, shift: .85 });
   if (vol > .1) for (let i = 0; i < 5; i++) sTone(rnd(180, 420), .05, vol * .1, 'sine', .2 + i * rnd(.07, .14), 90); }
 // something forcing its way up through the floor
 function sSpawn(vol, pan) { if (vol < .04) return; sNoise(85, 1.2, vol * .9); sTone(44, .5, vol * .7, 'sine', 0, 26); for (let i = 0; i < 4; i++) setTimeout(() => sNoise(rnd(1500, 2600), rnd(.08, .2), vol * .3, 'bandpass'), 150 + i * rnd(140, 260));
-  const f = rnd(48, 62); vox({ f0: f, f1: f * 1.9, f2: f * 1.3, dur: 1.3, vol: .8 * vol, pan, v0: 'u', v1: 'a', rat: 1, ratf: 16, ratEnd: 2.4, breath: .6, att: .5, shift: .8, when: .25 }); }
+  if (clip('groan', vol, pan, rnd(.45, .55))) return; const f = rnd(48, 62); vox({ f0: f, f1: f * 1.9, f2: f * 1.3, dur: 1.3, vol: .8 * vol, pan, v0: 'u', v1: 'a', rat: 1, ratf: 16, ratEnd: 2.4, breath: .6, att: .5, shift: .8, when: .25 }); }
 function sFlesh(head) { sNoise(650, .08, .55, 'bandpass'); sNoise(1900, .05, .22, 'bandpass'); sTone(105, .08, .55, 'sine', 0, 45); if (head) sCrack(.6); }
 function sHurt() { sTone(72, .2, .85, 'sine', 0, 34); sNoise(950, .18, .5, 'bandpass'); sNoise(300, .12, .5); sTone(3300, 1.1, .025, 'sine');
   vox({ f0: rnd(140, 170), f1: 120, f2: 95, dur: .38, vol: .45, pan: 0, v0: 'a', v1: 'o', breath: .6, fry: .1, att: .02, jit: .03 }); }
@@ -2237,7 +2246,7 @@ function init() {
     b.innerHTML = '<i style="background:linear-gradient(180deg,' + hx(S.hat === 'bare' ? 0x3a2c22 : S.head) + ' 0 28%,' + hx(S.vest) + ' 28% 62%,' + hx(S.cloth) + ' 62% 76%,' + hx(S.pants) + ' 76%)"></i><b>' + S.name + '</b>';
     b.onclick = () => { if (G.started) return; L.skin = i; try { localStorage.setItem('hwSkin', i); } catch (e) {} document.querySelectorAll('.skbtn').forEach(x => x.classList.remove('sel')); b.classList.add('sel'); }; $('skins').appendChild(b); });
   const jq = new URLSearchParams(location.search).get('join'); if (jq) { $('joincode').value = jq.toUpperCase().slice(0, 5); status('Invite code filled in — press Join game.'); }
-  window.HW = { snd: { sGroan, sSnarl, sScream, sHiss, sGurgle, sSpawn, sFlesh, sHurt, sSiren, sPowerDown }, ghost, ambush, scareFace, SKINS, musicState: () => ({ tension, mNext, on: musicOn, ok: !!musicG }), hostBuy, obj: () => OBJ, killZombie, G, players, zombies, L, Net, MAPS, loadMap, hostHit, spawnZombie, drops, fire, melee, dealHit, camera: () => camera, WEAPONS, giveWeapon, navStep, groundY, tileL, moveCollide, map: () => ({ MAP, LAYERS, NL, EVAC, W, H, id: MAPID, spawn: SPAWN, zSpawns, colliders, lightSpots, interactables, navBlock, flow }) };
+  window.HW = { zbuf, snd: { sGroan, sSnarl, sScream, sHiss, sGurgle, sSpawn, sFlesh, sHurt, sSiren, sPowerDown }, ghost, ambush, scareFace, SKINS, musicState: () => ({ tension, mNext, on: musicOn, ok: !!musicG }), hostBuy, obj: () => OBJ, killZombie, G, players, zombies, L, Net, MAPS, loadMap, hostHit, spawnZombie, drops, fire, melee, dealHit, camera: () => camera, WEAPONS, giveWeapon, navStep, groundY, tileL, moveCollide, map: () => ({ MAP, LAYERS, NL, EVAC, W, H, id: MAPID, spawn: SPAWN, zSpawns, colliders, lightSpots, interactables, navBlock, flow }) };
   frame();
 }
 let lastFrame = 0, lastTick = 0;
