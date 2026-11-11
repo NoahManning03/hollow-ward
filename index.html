@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hollow Ward</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:"Helvetica Neue",Arial,sans-serif;color:#ddd;user-select:none}
+  #c{position:fixed;inset:0;width:100%;height:100%;display:block}
+  .ov{position:fixed;inset:0;pointer-events:none}
+  #vig{background:radial-gradient(ellipse at center,rgba(0,0,0,0) 45%,rgba(0,0,0,.55) 80%,rgba(0,0,0,.92) 100%)}
+  #grain{opacity:.09;mix-blend-mode:screen}
+  #hurt{background:radial-gradient(ellipse at center,rgba(120,0,0,0) 30%,rgba(150,0,0,.85) 100%);opacity:0}
+  #hud{display:none}
+  #cross{position:fixed;left:50%;top:50%;width:0;height:0}
+  #cross i{position:absolute;background:rgba(230,230,220,.8);box-shadow:0 0 2px #000}
+  #cross i:nth-child(1){width:2px;height:8px;left:-1px;top:-16px}
+  #cross i:nth-child(2){width:2px;height:8px;left:-1px;top:8px}
+  #cross i:nth-child(3){width:8px;height:2px;left:-16px;top:-1px}
+  #cross i:nth-child(4){width:8px;height:2px;left:8px;top:-1px}
+  #hit{position:fixed;left:50%;top:50%;width:22px;height:22px;margin:-11px 0 0 -11px;opacity:0;
+    background:linear-gradient(45deg,transparent 46%,#fff 46%,#fff 54%,transparent 54%),linear-gradient(-45deg,transparent 46%,#fff 46%,#fff 54%,transparent 54%)}
+  #round{position:fixed;left:28px;bottom:20px;font:900 74px Georgia,serif;color:#8e0d0d;text-shadow:0 0 14px #300,0 2px 2px #000;letter-spacing:2px}
+  #left{position:fixed;left:32px;bottom:104px;font-size:13px;color:#a99;letter-spacing:2px;text-transform:uppercase;text-shadow:0 1px 2px #000}
+  #scores{position:fixed;right:26px;bottom:120px;text-align:right;font-size:16px;text-shadow:0 1px 3px #000}
+  #scores div{margin:3px 0;color:#9a9a90}
+  #scores .me{color:#f2e6b0;font-weight:700;font-size:20px}
+  #scores .down{color:#a22}
+  #ammo{position:fixed;right:26px;bottom:24px;text-align:right;text-shadow:0 1px 3px #000}
+  #wname{font-size:14px;letter-spacing:2px;text-transform:uppercase;color:#bbb}
+  #am{font:700 46px "Helvetica Neue",Arial;color:#f0f0e8}
+  #rs{font-size:22px;color:#999;margin-left:6px}
+  #hp{position:fixed;left:50%;bottom:26px;width:240px;height:6px;margin-left:-120px;background:rgba(0,0,0,.6);border:1px solid rgba(255,255,255,.15)}
+  #hpbar{height:100%;width:100%;background:#b8c4a0}
+  #prompt{position:fixed;left:0;right:0;top:62%;text-align:center;font-size:18px;color:#f1ead0;text-shadow:0 1px 4px #000}
+  #msg{position:fixed;left:0;right:0;top:20%;text-align:center;font:700 34px Georgia,serif;color:#b01515;text-shadow:0 0 18px #400,0 2px 3px #000;opacity:0;letter-spacing:4px}
+  #power{position:fixed;left:0;right:0;bottom:60px;text-align:center;font-size:15px;letter-spacing:3px;color:#ffd35a;text-shadow:0 0 8px #a60}
+  #code{position:fixed;left:20px;top:14px;font-size:13px;color:#8a8;letter-spacing:1px;text-shadow:0 1px 2px #000}
+  #lockhint{position:fixed;left:0;right:0;top:44%;text-align:center;font-size:22px;color:#fff;text-shadow:0 2px 6px #000;display:none}
+  #menu,#over{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.62);z-index:5}
+  #over{display:none;background:rgba(30,0,0,.8)}
+  .panel{width:min(560px,92vw);padding:28px 32px;background:rgba(10,12,11,.88);border:1px solid #2c302c;box-shadow:0 0 60px #000}
+  h1{margin:0 0 2px;font:900 54px Georgia,serif;color:#9c1212;letter-spacing:6px;text-shadow:0 0 22px #400}
+  .sub{color:#77796f;letter-spacing:3px;font-size:12px;text-transform:uppercase;margin-bottom:22px}
+  label{display:block;font-size:12px;letter-spacing:2px;color:#888;text-transform:uppercase;margin:12px 0 5px}
+  input{width:100%;box-sizing:border-box;padding:10px 12px;background:#141614;border:1px solid #333;color:#eee;font-size:16px;outline:none}
+  input:focus{border-color:#7a1a1a}
+  button{pointer-events:auto;cursor:pointer;padding:12px 16px;margin-top:12px;width:100%;background:#5c0f0f;border:1px solid #8a1c1c;color:#f3e9e0;font-size:15px;letter-spacing:2px;text-transform:uppercase}
+  button:hover{background:#7a1515}
+  button.alt{background:#1b1e1b;border-color:#3a3f3a}
+  button.alt:hover{background:#262a26}
+  .row{display:flex;gap:10px}.row>*{flex:1}
+  #status{min-height:20px;margin-top:12px;color:#d8b25a;font-size:14px}
+  .keys{margin-top:16px;font-size:12.5px;line-height:1.7;color:#8b8d84;border-top:1px solid #262926;padding-top:12px}
+  .keys b{color:#c9c9bd;font-weight:600}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="grain" class="ov"></div>
+<div id="vig" class="ov"></div>
+<div id="hurt" class="ov"></div>
+
+<div id="hud" class="ov">
+  <div id="cross"><i></i><i></i><i></i><i></i></div>
+  <div id="hit"></div>
+  <div id="left"></div>
+  <div id="round"></div>
+  <div id="scores"></div>
+  <div id="ammo"><div id="wname"></div><div><span id="am"></span><span id="rs"></span></div></div>
+  <div id="hp"><div id="hpbar"></div></div>
+  <div id="prompt"></div>
+  <div id="msg"></div>
+  <div id="power"></div>
+  <div id="code"></div>
+  <div id="lockhint">Click to take control</div>
+</div>
+
+<div id="menu">
+  <div class="panel">
+    <h1>HOLLOW WARD</h1>
+    <div class="sub">Nobody was discharged</div>
+    <label>Your name</label>
+    <input id="name" maxlength="14" value="Survivor">
+    <button id="solo">Play solo</button>
+    <button id="host" class="alt">Host online game</button>
+    <div class="row">
+      <input id="joincode" maxlength="5" placeholder="ROOM CODE" style="margin-top:12px;text-transform:uppercase;letter-spacing:4px">
+      <button id="join" class="alt">Join game</button>
+    </div>
+    <div id="status"></div>
+    <div class="keys">
+      <b>WASD</b> move &nbsp; <b>Shift</b> sprint &nbsp; <b>Space</b> jump &nbsp; <b>Mouse</b> aim &nbsp; <b>Left click</b> fire &nbsp; <b>Right click</b> aim down sights<br>
+      <b>R</b> reload &nbsp; <b>1 / 2 / wheel</b> switch weapon &nbsp; <b>V</b> melee &nbsp; <b>F</b> flashlight &nbsp; <b>E</b> buy / open
+    </div>
+  </div>
+</div>
+
+<div id="over">
+  <div class="panel" style="text-align:center">
+    <h1>YOU DIED</h1>
+    <div class="sub" id="overtext"></div>
+    <button onclick="location.reload()">Try again</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
