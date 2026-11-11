@@ -92,7 +92,7 @@ const WEAPONS = {
 
 // ---------------------------------------------------------------- state
 let scene, camera, renderer, wscene, wcam, clock, raycaster;
-const G = { started: false, host: true, myId: 'h', round: 0, state: 'inter', interT: 6, toSpawn: 0, spawnT: 0, insta: 0, evacT: 0, time: 0, over: false, code: '' };
+const G = { started: false, host: true, myId: 'h', round: 0, state: 'inter', interT: 6, toSpawn: 0, spawnT: 0, insta: 0, evacT: 0, oi: 0, op: 0, og: 0, om: 0, time: 0, over: false, code: '' };
 const players = {}; let me = null;
 const zombies = [], zById = {}, corpses = []; let zSeq = 1;
 const drops = []; let dropSeq = 1;
@@ -235,7 +235,7 @@ let levelGroup = null, glowMesh = null, skyGroup = null, hemi = null, sun = null
 const lightSpots = [], pool = [], weatherPts = [];
 let LR = Math.random;                         // seeded while a map is generated, so every player builds the identical level
 const lr = (a, b) => a + LR() * (b - a), lpick = n => (LR() * n) | 0;
-let instQ = {}, wallQ = {}, glowQ = [], PY = 0, PL = 0, heli = null;
+let instQ = {}, wallQ = {}, glowQ = [], PY = 0, PL = 0, heli = null, crateShow = null, OBJ = { gens: [], sups: [], zone: null, list: [] };
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 function M(x, y, z, rx, ry, rz, sx, sy, sz) {
   return new THREE.Matrix4().compose(V3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx || 0, ry || 0, rz || 0)), V3(sx || 1, sy || 1, sz || 1));
@@ -378,6 +378,18 @@ Object.assign(KITS, {
   pool: K => K.c(1, 1, .01, 0, 0, 0, 0x2a0403, 14).c(.45, .45, .011, .9, 0, .5, 0x2a0403, 10).c(.3, .3, .011, -.8, 0, -.7, 0x2a0403, 8).b(.25, .011, 1.6, .3, 0, 1.4, 0x2a0403, 0, .3, 0),
   hang: K => { K.c(.012, .012, 1.0, 0, 3.1, 0, 0x2a2118, 5).s(.25, 0, 1.72, 0, 0x1c1916, 1, 2.7, .95).s(.13, 0, 2.5, .02, 0x1c1916, 1, 1.1, 1).c(.26, .2, .05, 0, 2.2, 0, 0x2a2118, 10).c(.25, .22, .05, 0, 1.5, 0, 0x2a2118, 10).c(.16, .1, .05, 0, 1.12, 0, 0x2a2118, 10)
      .s(.1, .06, 1.02, 0, 0x4a5244, 1, 1.6, 1).s(.1, -.07, .98, .02, 0x4a5244, 1, 1.6, 1).s(.26, 0, 1.6, .03, 0x3a0605, .96, 1.2, 1); for (let i = 0; i < 4; i++) K.b(.012, .25 + i * .08, .012, -.1 + i * .07, .78 - i * .04, .05, 0x3a0605); },
+  gen: K => { K.b(1.6, .1, .95, 0, .19, 0, 0x26282a).b(1.3, .62, .8, 0, .56, 0, 0x8a6a14).b(.52, .56, .74, .36, .6, 0, 0x34373a).c(.3, .3, .74, -.3, 1.06, 0, 0x6a1c16, 12, 0, 0, Math.PI / 2).c(.06, .06, .08, -.3, 1.38, 0, 0x151515, 8)
+     .c(.045, .045, .7, .5, 1.2, .22, 0x2a2c2e, 8).c(.07, .07, .16, .5, 1.6, .22, 0x151515, 8).b(.46, .3, .04, -.3, .58, .41, 0x121416).b(.1, .06, .05, -.42, .62, .44, 0x8a2a20).b(.1, .06, .05, -.2, .62, .44, 0xc8c8c0)
+     .b(1.7, .05, .05, 0, .98, .47, 0x26282a).b(1.7, .05, .05, 0, .98, -.47, 0x26282a); for (const a of [[-.82, .47], [.82, .47], [-.82, -.47], [.82, -.47]]) K.b(.05, .84, .05, a[0], .58, a[1], 0x26282a);
+    for (const a of [[-.55, .5], [.55, .5], [-.55, -.5], [.55, -.5]]) K.c(.15, .15, .1, a[0], .15, a[1], 0x0a0a0a, 10, Math.PI / 2, 0, 0); for (let i = 0; i < 5; i++) K.b(.5, .03, .02, .36, .42 + i * .08, .376, 0x151515); },
+  case: K => K.b(.95, .4, .58, 0, .22, 0, 0x39432a).b(.99, .07, .62, 0, .42, 0, 0x2a3220).b(.32, .03, .04, 0, .475, 0, 0x151515).b(.06, .1, .02, -.3, .36, .3, 0x9a9a90).b(.06, .1, .02, .3, .36, .3, 0x9a9a90).b(.22, .07, .012, 0, .22, .296, 0xc8c8c0).b(.07, .22, .012, 0, .22, .297, 0xc8c8c0).b(1.0, .04, .63, 0, .03, 0, 0x2a3220),
+  stack: K => { const cr = (sz, x, y, z, ry, col) => { K.b(sz, sz, sz, x, y, z, col, 0, ry, 0); for (const e of [-1, 1]) K.b(sz * 1.04, sz * .09, sz * 1.04, x, y + e * sz * .44, z, 0x3a2c1c, 0, ry, 0).b(sz * .09, sz * 1.02, sz * 1.04, x + Math.cos(ry) * e * sz * .46, y, z - Math.sin(ry) * e * sz * .46, 0x3a2c1c, 0, ry, 0); };
+    cr(.9, -.3, .45, 0, .1, 0x5a4630); cr(.8, .62, .4, .1, -.3, 0x66503a); cr(.7, -.1, 1.25, .05, .5, 0x54402c); K.b(.5, .3, .4, .7, .95, .1, 0x39432a, 0, .4, 0).b(1.0, .02, .7, .5, .82, .1, 0x2c3426, .05, -.3, .04); },
+  pallet: K => { for (let i = 0; i < 5; i++) K.b(1.2, .025, .15, 0, .14, -.42 + i * .21, 0x6a5238); for (const z of [-.42, 0, .42]) K.b(1.2, .1, .1, 0, .07, z, 0x54402c);
+    K.b(.5, .4, .5, -.3, .36, .1, 0x7a6a50).b(.45, .35, .45, .28, .33, -.12, 0x6a5a44).s(.26, .3, .3, .32, 0x8a8068, 1.3, .6, 1).s(.26, -.25, .68, .1, 0x8a8068, 1.3, .55, 1); },
+  sandbag: K => { for (let r = 0; r < 3; r++) for (let i = 0; i < 5 - r; i++) K.s(.24, -1.0 + i * .5 + r * .25, .14 + r * .25, (r % 2) * .04, r % 2 ? 0x6a5e44 : 0x74684c, 1.25, .62, 1); },
+  vending: K => K.b(.95, 1.95, .7, 0, .98, 0, 0x1c2a4a).b(.62, 1.15, .02, -.12, 1.2, .355, 0x0a0e14).b(.2, .5, .02, .33, 1.3, .355, 0x2a2c30).b(.6, .2, .02, -.12, .32, .355, 0x0e1014).b(.99, .06, .74, 0, 1.97, 0, 0x121a2e).b(.99, .1, .74, 0, .05, 0, 0x121a2e).b(.5, .012, .01, -.12, 1.5, .37, 0x4a5a8a, 0, 0, .6).b(.3, .012, .01, -.2, 1.0, .37, 0x4a5a8a, 0, 0, -.8),
+  ladder: K => { for (const sx of [-.22, .22]) K.seg(.025, .025, [sx, 0, .55], [sx, 3.2, -.12], 0x7a7e80, 6); for (let i = 1; i < 10; i++) K.c(.016, .016, .44, 0, i * .32, .55 - i * .067, 0x8a8e90, 6, 0, 0, Math.PI / 2); },
   rotor: K => K.b(11, .04, .34, 0, 0, 0, 0x151515).b(.34, .04, 11, 0, 0, 0, 0x151515).c(.16, .16, .2, 0, 0, 0, 0x2a2c2e, 8)
 });
 const METAL = { car: 1, van: 1, lamp: 1, rail: 1, dumpster: 1, locker: 1, barrel: 1, pump: 1, truck: 1, tlight: 1, gantry: 1, acunit: 1, mailbox: 1, heli: 1 }, NOSHADOW = { drift: 1, deb: 1, pool: 1 };
@@ -502,6 +514,7 @@ function initLevelMats() {
   MAT.vc = new THREE.MeshStandardMaterial({ map: grime, bumpMap: bump, bumpScale: .02, roughness: .88, metalness: 0, vertexColors: true });
   MAT.vcM = new THREE.MeshStandardMaterial({ map: grime, bumpMap: bump, bumpScale: .012, roughness: .5, metalness: .35, vertexColors: true });
   MAT.glow = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  MAT.beacon = new THREE.MeshBasicMaterial({ color: 0x50ff90, transparent: true, opacity: .4, depthWrite: false, side: THREE.DoubleSide });
   MAT.wood = new THREE.MeshStandardMaterial({ map: canvasTex(128, (g, s) => { g.fillStyle = '#3a2c1c'; g.fillRect(0, 0, s, s); for (let i = 0; i < 40; i++) { g.fillStyle = `rgba(${rnd(20, 90) | 0},${rnd(15, 60) | 0},20,.35)`; g.fillRect(0, Math.random() * s, s, rnd(1, 4)); } grainFx(g, s, 30); }), bumpMap: bump, bumpScale: .03, roughness: .9 });
   MAT.metal = new THREE.MeshStandardMaterial({ color: 0x23272a, metalness: .85, roughness: .42 });
   MAT.olive = new THREE.MeshStandardMaterial({ color: 0x39432a, metalness: .3, roughness: .7 });
@@ -549,8 +562,26 @@ function Gen(w, h, fill) {
     // loose decoration with no collision
     scatter: (k, n, test, o) => { let t = n * 30; while (n > 0 && t-- > 0) { const c = lpick(w), r = lpick(h); if (!G.free(c, r) || !test(g[r][c])) continue;
       props.push(Object.assign({ k, x: wx(c) + lr(-1.3, 1.3), z: wx(r) + lr(-1.3, 1.3), c, r }, o || {})); n--; } }
+    ,
+    // free-standing junk, kept off the centre line of its tile so paths stay clear
+    loose: (kinds, n, test) => { let t = n * 30; while (n > 0 && t-- > 0) { const c = 1 + lpick(w - 2), r = 1 + lpick(h - 2); if (!G.free(c, r) || !test(g[r][c]) || G.nearDoor(c, r)) continue;
+      const a = lr(0, 6.28); props.push({ k: kinds[lpick(kinds.length)], x: wx(c) + Math.cos(a) * .95, z: wx(r) + Math.sin(a) * .95, c, r, loose: 1 }); used[r * w + c] = 1; n--; } },
+    // well spread open spots for objectives and extra crates
+    spots: n => { const cand = [], out = [], sp = G.spawn;
+      for (let t = 0; t < 6000 && cand.length < 400; t++) { const c = 2 + lpick(w - 4), r = 2 + lpick(h - 4); if (!G.free(c, r)) continue; let ok = true; for (let y = -1; y <= 1; y++) for (let x = -1; x <= 1; x++) if (!G.open(c + x, r + y)) ok = false; if (ok) cand.push([c, r, LR() * 2]); }
+      const sc = q => { let d = Math.hypot(q[0] - sp.c, q[1] - sp.r); for (const o of out) d = Math.min(d, Math.hypot(q[0] - o[0], q[1] - o[1])); return Math.min(d, 15) + q[2]; };
+      for (let i = 0; i < n && cand.length; i++) { let b = 0, bd = -1; cand.forEach((q, j) => { const d = sc(q); if (d > bd) { bd = d; b = j; } }); out.push(cand[b]); G.reserve(cand[b][0], cand[b][1], 1); cand.splice(b, 1); }
+      return out; }
   };
   return G;
+}
+// three generators, four supply cases, one hold point, then any extra Mystery Crates
+function objectives(G, crates, noZone) {
+  const s = G.spots(7 + crates + (noZone ? 0 : 1)); let i = 0;
+  for (let k = 0; k < 3 && i < s.length; k++, i++) G.props.push({ k: 'gen', c: s[i][0], r: s[i][1], i: k, ry: lr(0, 6) });
+  for (let k = 0; k < 4 && i < s.length; k++, i++) G.props.push({ k: 'sup', c: s[i][0], r: s[i][1], i: k });
+  if (!noZone && i < s.length) { G.props.push({ k: 'zone', c: s[i][0], r: s[i][1] }); i++; }
+  for (; i < s.length; i++) G.add('crate', s[i][0], s[i][1]);
 }
 const CARCOL = [0x6a1f1c, 0x26384e, 0x8a8c8a, 0x2c2e30, 0x7a6a44, 0x39503c, 0xa8a69c, 0x4a2c50];
 function addCar(G, c, r, ry) { const burnt = LR() < .24; G.add('car', c, r, { ry, van: LR() < .22, col: burnt ? 0x1a1612 : CARCOL[lpick(CARCOL.length)], fire: burnt && LR() < .45, tilt: burnt ? lr(-.06, .06) : 0, sink: burnt }); }
@@ -566,7 +597,9 @@ function genWard() {
     if (ch === 'P') { G.spawn = { c, r }; G.reserve(c, r, 1); }
     if (ch === 'S' || ch === 's') G.add('zs', c, r); if (ch === 'L') G.add('light', c, r); if (ch === 'o') G.add('barrel', c, r, { box: 1 });
     if (ch === 't') G.add('dtree', c, r, { s: 1.1 }); if (ch === 'M') G.add('crate', c, r); if (ch === 'A') G.add('ammo', c, r); if (ch === 'H') G.add('stim', c, r); } });
+  objectives(G, 1);
   G.clutter(['bed', 'bed', 'bed', 'locker', 'cabinet', 'desk', 'chair', 'shelf', 'bodybag'], 46, ch => ch === '.');
+  G.clutter(['stack', 'box', 'pallet', 'box', 'vending', 'ladder', 'sandbag'], 22, ch => true);
   G.clutter(['bench', 'box', 'barrel', 'bags'], 6, ch => ch === ',');
   G.scatter('deb', 170, ch => ch === '.'); G.scatter('rubble', 10, ch => ch === '.'); G.scatter('bodybag', 8, ch => ch === '.'); G.scatter('deb', 40, ch => ch === ',');
   G.scatter('hang', 10, ch => ch === '.'); G.scatter('pool', 46, ch => true);
@@ -596,6 +629,8 @@ function genWoods() {
   G.deco({ k: 'fire', x: wx(23) + 2.6, z: wx(29) - 2.6 });
   for (const q of [[5, 5], [23, 4], [40, 5], [4, 23], [41, 22], [5, 40], [23, 41], [40, 40], [13, 14], [33, 30], [12, 28], [32, 17], [16, 38], [36, 36], [54, 6], [54, 30], [54, 53], [30, 54], [8, 54], [50, 42], [28, 48], [52, 18]]) { G.set(q[0], q[1], ','); G.add('zs', q[0], q[1]); G.reserve(q[0], q[1], 1); }
   G.add('car', 14, 23, { ry: .6, col: 0x39503c, sink: true }); G.reserve(14, 23, 1); G.add('car', 31, 38, { ry: 2.3, van: true, col: 0x8a8c8a }); G.reserve(31, 38, 1); G.add('car', 40, 50, { ry: 1.1, col: 0x6a1f1c, sink: true }); G.reserve(40, 50, 1);
+  objectives(G, 2);
+  G.loose(['box', 'stack', 'barrel', 'pallet', 'sandbag', 'box', 'stack'], 70, ch => ch === ',');
   for (let i = 0, k = 0; i < 700 && k < 40; i++) { const c = 4 + lpick(n - 8), r = 4 + lpick(n - 8); if (!G.ring(c, r)) continue; g[r][c] = 'R'; G.reserve(c, r, 1); k++; }
   for (let r = 2; r < n - 2; r++) for (let c = 2; c < n - 2; c++) { if (g[r][c] !== ',' || !G.free(c, r) || LR() > .34) continue; const a = lr(0, 6.28), d = lr(.75, 1.15);
     G.deco({ k: LR() < .78 ? 'pine' : 'dtree', x: wx(c) + Math.cos(a) * d, z: wx(r) + Math.sin(a) * d, s: lr(.8, 1.4), ry: lr(0, 6) }); }
@@ -621,9 +656,10 @@ function genBack() {
     if (!cells.length) continue; for (const [x, y] of cells) g[y][x] = '#';
     if (walk() !== total - cells.length) { for (const [x, y] of cells) g[y][x] = '.'; } else total -= cells.length; }
   G.reserve(28, 28, 1); G.add('ammo', 28, 9); G.add('stim', 28, 47); G.add('crate', 47, 47); G.reserve(28, 9, 1); G.reserve(28, 47, 1); G.reserve(47, 47, 1);
+  objectives(G, 2);
   for (let r = 2; r < n - 1; r += 3) for (let c = 2; c < n - 1; c += 3) if (g[r][c] === '.') G.add('light', c, r, { m: LR() < .4 ? 2 : LR() < .75 ? 1 : 0 });
   for (let s = 0; s < 9; s++) for (let k = 0, t = 0; k < 3 && t < 400; t++) { const c = 2 + lpick(16) + (s % 3) * 19, r = 2 + lpick(16) + ((s / 3) | 0) * 19; if (!G.free(c, r) || Math.hypot(c - 28, r - 28) < 6) continue; G.add('zs', c, r); k++; }
-  G.clutter(['chair', 'desk', 'cabinet', 'shelf', 'box', 'chair', 'locker', 'bags'], 80, ch => ch === '.'); G.scatter('deb', 150, ch => ch === '.'); G.scatter('rubble', 14, ch => ch === '.');
+  G.clutter(['chair', 'desk', 'cabinet', 'shelf', 'box', 'chair', 'locker', 'bags', 'stack', 'vending', 'pallet', 'ladder', 'box', 'stack'], 150, ch => ch === '.'); G.loose(['box', 'stack', 'barrel', 'pallet', 'chair'], 40, ch => ch === '.'); G.scatter('deb', 150, ch => ch === '.'); G.scatter('rubble', 14, ch => ch === '.');
   G.scatter('hang', 16, ch => ch === '.'); G.scatter('pool', 70, ch => true); G.scatter('bodybag', 12, ch => true);
   return G;
 }
@@ -644,6 +680,7 @@ function genHighway() {
   for (const q of [[2, 84], [12, 86], [3, 116], [2, 100], [11, 95], [9, 83], [2, 108], [2, 44], [12, 44], [2, 70], [12, 74], [3, 60], [9, 43], [2, 52], [12, 66], [2, 4], [12, 4], [2, 20], [12, 24], [6, 3], [9, 14], [2, 34], [12, 36]]) G.add('zs', q[0], q[1]);
   const carAt = new Uint8Array(w * h);
   for (const q of [[5, 100, Math.PI], [9, 68, 0], [5, 50, Math.PI], [9, 24, 0], [5, 12, Math.PI]]) { G.deco({ k: 'truck', c: q[0], r: q[1], ry: q[2], col: CARCOL[lpick(CARCOL.length)] }); G.reserve(q[0], q[1], 2); for (let y = -2; y <= 2; y++) carAt[(q[1] + y) * w + q[0]] = 1; }
+  objectives(G, 2);
   for (let r = 3; r < e - 1; r++) for (let c = 4; c <= 10; c++) { if (g[r][c] !== '=' || !G.free(c, r) || LR() > .17) continue;
     let ok = true; for (let y = -1; y <= 1; y++) for (let x = -1; x <= 1; x++) if (carAt[(r + y) * w + c + x]) ok = false; if (!ok) continue;
     carAt[r * w + c] = 1; addCar(G, c, r, LR() < .2 ? lr(0, 6.28) : (c < 7 ? Math.PI : 0) + lr(-.35, .35)); }
@@ -652,7 +689,7 @@ function genHighway() {
     if (r % 2 === 0 && r !== far && r !== near) for (const x of [15, 18, 27, 30]) G.deco({ k: 'dash', x, z: wx(r) }); }
   for (const x of [12.2, 20.8, 24.2, 32.8]) G.deco({ k: 'slab', x, y: .012, z: h * 1.5, sx: .14, sy: .02, sz: h * 3 - 14, col: 0x8a8778 });
   for (const r of [96, 64, 28, 108, 16]) G.deco({ k: 'gantry', x: 22.5, z: wx(r) + 1.4 });
-  const dirt = ch => ch === ','; G.clutter(['barrel', 'box', 'tyres', 'dumpster', 'tyres', 'bags'], 40, dirt);
+  const dirt = ch => ch === ','; G.clutter(['barrel', 'box', 'tyres', 'dumpster', 'tyres', 'bags', 'stack', 'sandbag', 'pallet', 'stack'], 70, dirt); G.loose(['box', 'stack', 'barrel', 'pallet', 'sandbag', 'tyres', 'box'], 70, ch => ch === ',' || ch === '=');
   G.scatter('dtree', 34, dirt, { s: 1 }); G.scatter('sign', 14, dirt); G.scatter('deb', 360, ch => ch !== '#'); G.scatter('rubble', 36, ch => ch !== '#'); G.scatter('cone', 24, ch => ch === '='); G.scatter('bodybag', 10, ch => ch === '=');
   G.scatter('pool', 70, ch => true); G.scatter('hang', 2, ch => ch === '.');
   return G;
@@ -672,7 +709,8 @@ function genCity() {
     if (LR() < .4 && G.free(c1 - 1, r0 + 1)) G.add('zs', c1 - 1, r0 + 1);
   };
   // the tower: a full block, F real floors joined by a switchback staircase, extraction pad on the roof
-  const tower = (c0, r0, F) => {
+  const towers = [];
+  const tower = (c0, r0, F, main) => {
     const c1 = c0 + 8, r1 = r0 + 8, s = c0 + 2, A = r0 + 1, B = r0 + 2, C = r0 + 3;
     while (G.layers.length <= F) G.addLayer();
     for (let l = 0; l <= F; l++) { const L = G.layers[l], roof = l === F, even = l % 2 === 0, P = (k, c, r, o) => G.props.push(Object.assign({ k, c, r, l }, o || {}));
@@ -680,7 +718,7 @@ function genCity() {
       if (!roof) { L[B][s] = L[B][s + 1] = L[C + 1][s] = L[C + 1][s + 1] = '#'; if (even) { L[A][s] = '1'; L[A][s + 1] = '2'; } else { L[C][s + 1] = '3'; L[C][s] = '4'; } L[r0 + 5][c0 + 5] = '#'; if (l % 3 === 1) L[r0 + 6][c0 + 2] = '#'; if (l % 3 === 2) L[r0 + 2][c0 + 6] = '#'; }
       else { L[B][s] = L[B][s + 1] = 'p'; }
       if (l > 0) { if (even) { L[C][s + 1] = 'x'; L[C][s] = 'v'; } else { L[A][s] = 'x'; L[A][s + 1] = 'v'; } } else L[C][s] = L[C][s + 1] = '#';
-      if (roof) { P('evac', c0 + 5, r0 + 5); P('ac', c0 + 7, r0 + 2); P('ac', c0 + 2, r0 + 6); P('ac', c0 + 7, r0 + 6, { ry: 1.57 }); P('zs', c0 + 1, r0 + 7); P('zs', c0 + 7, r0 + 4); continue; }
+      if (roof) { if (main) P('evac', c0 + 5, r0 + 5); else { P('sandbag', c0 + 3, r0 + 7, { dx: 0, dz: 1 }); P('stack', c0 + 7, r0 + 5, { dx: 1, dz: 0 }); } P('ac', c0 + 7, r0 + 2); P('ac', c0 + 2, r0 + 6); P('ac', c0 + 7, r0 + 6, { ry: 1.57 }); P('zs', c0 + 1, r0 + 7); P('zs', c0 + 7, r0 + 4); continue; }
       P('light', c0 + 4, r0 + 2, { m: 0 }); P('light', c0 + 6, r0 + 3, { m: LR() < .5 ? 1 : 2 }); P('light', c0 + 3, r0 + 6, { m: 1 }); P('light', c0 + 6, r0 + 6, { m: LR() < .4 ? 0 : 2 });
       P('zs', c0 + 7, r0 + 7); if (l) P('zs', c0 + 7, r0 + 1);
       const fur = ['desk', 'shelf', 'locker', 'cabinet', 'chair', 'box', 'bed'];
@@ -691,11 +729,13 @@ function genCity() {
     const L0 = G.layers[0]; L0[r0][c0 + 6] = '.'; L0[r1][c0 + 4] = '.'; L0[r0 + 5][c1] = '.';
     for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) bld[r * n + c] = 1;
     G.reserve(c0 + 2, r0 + 2, 2); G.reserve(c0 + 6, r0 + 6, 2); G.reserve(c0 + 6, r0 + 2, 1); G.reserve(c0 + 2, r0 + 6, 1);
-    G.deco({ k: 'lamp', x: wx(c0 + 6) + 1.6, z: wx(r0) - 2.2, ry: Math.PI, lit: true });
+    if (main) G.deco({ k: 'lamp', x: wx(c0 + 6) + 1.6, z: wx(r0) - 2.2, ry: Math.PI, lit: true });
+    for (const q of [[c0 + 6, r0], [c0 + 4, r1], [c1, r0 + 5]]) G.deco({ k: 'exit', x: wx(q[0]), z: wx(q[1]), main });   // lit lintel over every way in to a climbable building
+    towers.push({ c0, r0, F, main });
   };
   for (let i = 0; i < NB; i++) for (let j = 0; j < NB; j++) G.add('zs', 2 + 12 * i, 2 + 12 * j);
   for (let j = 0; j < NB; j++) for (let i = 0; i < NB; i++) { const c0 = 4 + i * 12, r0 = 4 + j * 12, c1 = c0 + 8, r1 = r0 + 8; G.rect(c0, r0, c1, r1, ',');
-    if (i === 2 && j === 3) { tower(c0, r0, 5); continue; }
+    if (i === 2 && j === 3) { tower(c0, r0, 5, true); continue; }
     for (const a of [[c0, r0, -1, -1], [c1, r0, 1, -1], [c0, r1, -1, 1], [c1, r1, 1, 1]]) { const lit = LR() < .45 || (i === 2 && j === 2);
       if (LR() < .6) G.deco({ k: 'lamp', x: wx(a[0]) + a[2] * 1.0, z: wx(a[1]) + a[3] * 1.0, ry: Math.atan2(a[2], 0), lit }); else if (LR() < .5) G.deco({ k: 'tlight', x: wx(a[0]) + a[2] * 1.05, z: wx(a[1]) + a[3] * 1.05, ry: a[3] > 0 ? 0 : Math.PI });
       else if (LR() < .6) G.deco({ k: 'pole', x: wx(a[0]) + a[2] * 1.1, z: wx(a[1]) + a[3] * 1.1, ry: lr(0, 3) }); }
@@ -704,18 +744,25 @@ function genCity() {
     if (i === 1 && j === 2) { building(c0 + 1, r0 + 1, c1 - 1, r1 - 1, 4, false, 'b', 1); G.add('stim', c0 + 4, r0 + 4).add('light', c0 + 3, r0 + 4, { m: 1 }).add('bed', c0 + 2, r0 + 3, { dx: -1, dz: 0 }).add('cabinet', c0 + 4, r0 + 2, { dx: 0, dz: -1 }); continue; }
     if (i === 3 && j === 2) { G.add('crate', c0 + 4, r0 + 4); G.reserve(c0 + 4, r0 + 4, 1); G.deco({ k: 'lantern', x: wx(c0 + 4) + 2.4, z: wx(r0 + 4) - 2.4, ry: 2 }); continue; }
     const t = LR();
-    if (t < .56) building(c0 + 1, r0 + 1, c1 - 1, r1 - 1, 2 + lpick(5), LR() < .35);
+    if (t < .56) { if (LR() < .45) tower(c0, r0, 2 + lpick(3), false); else building(c0 + 1, r0 + 1, c1 - 1, r1 - 1, 2 + lpick(5), LR() < .35); }
     else if (t < .72) { building(c0 + 1, r0 + 1, c1 - 1, r0 + 3, 2 + lpick(3), false); building(c0 + 1, r0 + 5, c1 - 1, r1 - 1, 2 + lpick(3), LR() < .4); }
     else if (t < .86) { G.rect(c0, r0, c1, r1, '='); for (let r = r0 + 1; r < r1; r += 2) for (let c = c0 + 1; c < c1; c += 2) if (LR() < .55) addCar(G, c, r, lr(-.15, .15) + (LR() < .5 ? 0 : Math.PI)); }
     else for (let r = r0 + 1; r < r1; r++) for (let c = c0 + 1; c < c1; c++) if (LR() < .18) G.deco({ k: 'dtree', x: wx(c) + lr(.7, 1.1), z: wx(r) + lr(-1.1, -.7), s: lr(.8, 1.2) });
   }
+  // the hold point sits on one rooftop and a Mystery Crate on another
+  const side = towers.filter(t => !t.main).sort((a, b) => Math.hypot(a.c0 - 28, a.r0 - 28) - Math.hypot(b.c0 - 28, b.r0 - 28));
+  if (side[0]) G.props.push({ k: 'zone', c: side[0].c0 + 5, r: side[0].r0 + 5, l: side[0].F });
+  if (side[1]) G.props.push({ k: 'crate', c: side[1].c0 + 5, r: side[1].r0 + 5, l: side[1].F });
+  objectives(G, 3, !!side[0]);
   const carAt = new Uint8Array(n * n), street = v => (v - 1) % 12 < 3;
   for (let r = 1; r < m; r++) for (let c = 1; c < m; c++) { if (g[r][c] !== '=' || !G.free(c, r)) continue; const vs = street(c), hs = street(r); if (!vs && !hs) continue;
     if (!(vs && hs) && ((vs && (c - 1) % 12 === 1 && r % 2) || (hs && (r - 1) % 12 === 1 && c % 2))) G.deco({ k: 'dash', x: wx(c), z: wx(r), ry: vs ? 0 : Math.PI / 2 });
     if (LR() > .075) continue; let ok = true; for (let y = -1; y <= 1; y++) for (let x = -1; x <= 1; x++) if (carAt[(r + y) * n + c + x] || !G.open(c + x, r + y)) ok = false; if (!ok) continue;
     carAt[r * n + c] = 1; addCar(G, c, r, LR() < .25 ? lr(0, 6.28) : (vs ? 0 : Math.PI / 2) + lr(-.3, .3) + (LR() < .5 ? Math.PI : 0)); }
   G.clutter(['dumpster', 'box', 'barrel', 'tyres', 'bench', 'hydrant', 'dumpster', 'bags', 'mailbox', 'bags'], 130, ch => ch === ',');
-  G.clutter(['desk', 'shelf', 'locker', 'cabinet', 'chair', 'bed', 'desk', 'box'], 150, ch => ch === '.');
+  G.clutter(['desk', 'shelf', 'locker', 'cabinet', 'chair', 'bed', 'desk', 'box', 'stack', 'vending', 'pallet', 'ladder'], 200, ch => ch === '.');
+  G.clutter(['stack', 'box', 'pallet', 'sandbag', 'ladder', 'vending', 'stack', 'box'], 90, ch => ch === ',');
+  G.loose(['box', 'stack', 'barrel', 'pallet', 'sandbag', 'tyres', 'box', 'stack'], 170, ch => ch === ',' || ch === '=');
   G.scatter('deb', 800, ch => true); G.scatter('rubble', 90, ch => true); G.scatter('cone', 20, ch => ch === '='); G.scatter('sign', 30, ch => ch === ','); G.scatter('bodybag', 16, ch => ch !== '.');
   G.scatter('hang', 30, ch => ch === '.'); G.scatter('pool', 160, ch => true);
   return G;
@@ -757,7 +804,7 @@ function loadMap(id) {
   const def = MAPS[id] || MAPS.ward; MAPID = MAPS[id] ? id : 'ward';
   if (levelGroup) { scene.remove(levelGroup); levelGroup.traverse(o => { if (o.geometry && !o.geometry.userData.keep) o.geometry.dispose(); }); }
   levelGroup = new THREE.Group(); scene.add(levelGroup); propGroup = new THREE.Group(); doorGroup = new THREE.Group(); levelGroup.add(propGroup, doorGroup);
-  zSpawns.length = 0; interactables.length = 0; colliders.length = 0; lightSpots.length = 0; crateObj = null; EVAC = null; PY = 0; PL = 0;
+  zSpawns.length = 0; interactables.length = 0; colliders.length = 0; lightSpots.length = 0; crateObj = null; crateShow = null; EVAC = null; PY = 0; PL = 0; OBJ = { gens: [], sups: [], zone: null, list: [] };
   for (const k in doorOpen) delete doorOpen[k]; for (const k in doorMesh) delete doorMesh[k];
   for (const p of pool) { p.spot = null; p.l.intensity = 0; }
   instQ = {}; wallQ = {}; glowQ = []; LR = seeded(def.seed);
@@ -791,6 +838,10 @@ function loadMap(id) {
     if (ceil.length) { const m = tileMesh(l, ceil, y0 + WALL_H - .03, false, texMat(T.ceil), 3); levelGroup.add(m); shootables.push(m); }
   }
   d.props.forEach(placeProp);
+  if (OBJ.gens.length) OBJ.list.push({ t: 'gen', n: OBJ.gens.length, title: 'Start the generators' });
+  if (OBJ.sups.length) OBJ.list.push({ t: 'sup', n: OBJ.sups.length, title: 'Recover the supply cases' });
+  if (OBJ.zone) OBJ.list.push({ t: 'hold', n: 40, title: 'Hold the signal point' });
+  if (EVAC) OBJ.list.push({ t: 'evac', n: 1, title: 'Climb the tower and extract from the roof' });
   const o = new THREE.Object3D(), tc = new THREE.Color();
   for (const key in wallQ) { const kk = key.split('|'), list = wallQ[key], m = new THREE.InstancedMesh(wallGeo(kk[1]), texMat(kk[0]), list.length);
     list.forEach((p, i) => { o.position.set(p[0], p[1], p[2]); o.updateMatrix(); m.setMatrixAt(i, o.matrix); });
@@ -810,7 +861,7 @@ function loadMap(id) {
   if (flashlight) flashlight.distance = T.dens < .04 ? 44 : 34;
   if (heli) heli.visible = false;
 }
-const HUGS = { bed: [.98, .5, 1], locker: [1.2, .5, 1], cabinet: [1.18, .45, 0], shelf: [1.22, .5, 1], desk: [1.05, .5, 1], chair: [.9, .28, 0], dumpster: [.95, .6, 1], bench: [1.1, .35, 1], box: [.95, .5, 0], tyres: [1.05, .42, 0], hydrant: [.9, .2, 0], barrel: [1.0, .42, 0], bags: [1.0, .42, 0], mailbox: [1.08, .3, 0], bodybag: [.85, .15, 0] };
+const HUGS = { bed: [.98, .5, 1], locker: [1.2, .5, 1], cabinet: [1.18, .45, 0], shelf: [1.22, .5, 1], desk: [1.05, .5, 1], chair: [.9, .28, 0], dumpster: [.95, .6, 1], bench: [1.1, .35, 1], box: [.95, .5, 0], tyres: [1.05, .42, 0], hydrant: [.9, .2, 0], barrel: [1.0, .42, 0], bags: [1.0, .42, 0], mailbox: [1.08, .3, 0], bodybag: [.85, .15, 0], stack: [.95, .5, 1], pallet: [.9, .5, 0], sandbag: [1.1, .4, 1], vending: [1.13, .45, 0], ladder: [1.25, .15, 0] };
 const BARCOL = [0x6a4a34, 0x2c3c50, 0x5a2420, 0x3a4630, 0x55504a];
 function placeProp(p) {
   PL = p.l || 0; PY = PL * FH; const c0 = colliders.length, i0 = interactables.length;
@@ -833,6 +884,7 @@ function placeProp0(p) {
     for (const o of [-1.45, 0, 1.45]) colliders.push({ x: x + s * o, z: z + c * o, r: p.van ? 1.05 : .95 });
     if (p.fire) { const gi = glow(x + s * 1.3, 1.0, z + c * 1.3, .8, .35, .8, 0xff7a20, ry); spot(x + s * 1.3, 1.7, z + c * 1.3, 0xff7a28, 1.8, 14, 2, gi); } }
   else if (k === 'pine' || k === 'dtree') { const s = p.s || 1; put(k, x, 0, z, p.ry === undefined ? lr(0, 6) : p.ry, s, s * lr(.9, 1.2), s); colliders.push({ x, z, r: .3 * s }); }
+  else if (HUGS[k] && p.loose) { put(k, x, 0, z, lr(0, 6), 1, 1, 1, k === 'barrel' ? BARCOL[lpick(5)] : undefined); colliders.push({ x, z, r: Math.min(.5, HUGS[k][1]) }); }
   else if (HUGS[k] && p.dx !== undefined) { const h = HUGS[k], tx = -p.dz, tz = p.dx; x += p.dx * h[0]; z += p.dz * h[0];
     put(k, x, 0, z, Math.atan2(-p.dx, -p.dz), 1, 1, 1, k === 'barrel' ? BARCOL[lpick(5)] : undefined);
     if (h[2]) colliders.push({ x: x + tx * .5, z: z + tz * .5, r: h[1] }, { x: x - tx * .5, z: z - tz * .5, r: h[1] }); else colliders.push({ x, z, r: h[1] }); }
@@ -864,6 +916,14 @@ function placeProp0(p) {
     for (const q of [[-3.6, -3.6], [3.6, -3.6], [-3.6, 3.6], [3.6, 3.6]]) { put('cube', x + q[0], .2, z + q[1], 0, .16, .4, .16, 0x202224); spot(x + q[0], .6, z + q[1], 0xff3020, .9, 7, 1, glow(x + q[0], .45, z + q[1], .14, .14, .14, 0xff3020)); }
     interactables.push({ type: 'evac', x, z, cost: 0, range: 3.6 }); }
   else if (k === 'deb') for (let i = 0, n = 1 + lpick(3); i < n; i++) { const s = lr(.06, .26); put('deb', x + lr(-.5, .5), -s * .1, z + lr(-.5, .5), lr(0, 6), s, s * lr(.4, 1), s * lr(.7, 1.5), T.deb, lr(0, .5), lr(0, .5)); }
+  else if (k === 'exit') { const col = p.main ? 0x30ff70 : 0xffb030; spot(x, 2.9, z, col, .7, 9, 0, glow(x, 3.42, z, 2.3, .2, 2.3, col)); }
+  else if (k === 'gen') { put('gen', x, 0, z, p.ry || 0); nb(); colliders.push({ x, z, r: .85 });
+    const lamp = new THREE.Mesh(KGEO.glowBox, new THREE.MeshBasicMaterial({ color: 0xff2010 })); lamp.scale.set(.2, .2, .2); lamp.position.set(x, PY + 1.72, z); levelGroup.add(lamp);
+    OBJ.gens[p.i] = { x, z, l: PL, y: PY, lamp }; interactables.push({ type: 'gen', id: p.i, x, z, cost: 0, range: 2.7 }); }
+  else if (k === 'sup') { const m = new THREE.Mesh(kitGeo('case'), MAT.vc), b = new THREE.Mesh(KGEO.glowBox, MAT.beacon); b.scale.set(.1, 10, .1); b.position.y = 5.4; m.add(b);
+    m.position.set(x, PY, z); m.rotation.y = lr(0, 6); m.visible = false; levelGroup.add(m); OBJ.sups[p.i] = { x, z, l: PL, y: PY, m }; }
+  else if (k === 'zone') { const rg = new THREE.RingGeometry(4.5, 5, 48); rg.rotateX(-Math.PI / 2); const m = new THREE.Mesh(rg, MAT.beacon), b = new THREE.Mesh(KGEO.glowBox, MAT.beacon); b.scale.set(.25, 14, .25); b.position.y = 7; m.add(b);
+    m.position.set(x, PY + .05, z); m.visible = false; levelGroup.add(m); OBJ.zone = { x, z, l: PL, y: PY, m }; }
   else if (k === 'pool') put('pool', x, .012, z, lr(0, 6), lr(.4, 1.5), 1, lr(.4, 1.3));
   else if (KITS[k]) put(k, x, 0, z, lr(0, 6));
 }
@@ -882,7 +942,7 @@ function signMat(key, draw, col) {
   return MAT[key] || (MAT[key] = new THREE.MeshBasicMaterial({ map: canvasTex(128, (g, s) => { g.fillStyle = '#060606'; g.fillRect(0, 0, s, s); g.fillStyle = col; g.strokeStyle = col; draw(g, s); }) }));
 }
 function addCrate(x, z) {
-  const g = new THREE.Group(); g.position.set(x, 0, z);
+  const g = new THREE.Group(); g.position.set(x, PY, z);
   const base = new THREE.Mesh(new THREE.BoxGeometry(1.6, .62, .85), MAT.wood); base.position.y = .31; g.add(base);
   for (const sx of [-.6, 0, .6]) { const band = new THREE.Mesh(new THREE.BoxGeometry(.1, .66, .89), MAT.metal); band.position.set(sx, .32, 0); g.add(band); }
   for (const sx of [-.82, .82]) { const hd = new THREE.Mesh(new THREE.BoxGeometry(.04, .08, .3), MAT.metal); hd.position.set(sx, .42, 0); g.add(hd); }
@@ -893,10 +953,12 @@ function addCrate(x, z) {
   for (const sz of [-1, 1]) for (const sx of [-.3, .3]) { const q = new THREE.Mesh(new THREE.PlaneGeometry(.36, .36), sm); q.position.set(sx, .31, sz * .431); if (sz < 0) q.rotation.y = Math.PI; g.add(q); }
   g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   propGroup.add(g); colliders.push({ x: x - .4, z, r: .55 }, { x: x + .4, z, r: .55 });
-  const show = new THREE.Group(); show.position.set(x, 1.1, z); levelGroup.add(show);
-  crateObj = { g, lidP, glow: spot(x, 1.2, z, 0x4aa8ff, .8, 8, 0), show, models: {} };
-  for (const id in WEAPONS) { if (id === 'pistol') continue; const m = buildGun(id, false); m.scale.setScalar(1.6); m.rotation.y = Math.PI / 2; m.visible = false; show.add(m); crateObj.models[id] = m; }
-  interactables.push({ type: 'crate', x, z, cost: COST.crate, range: 2.4 });
+  if (!MAT.cbeam) MAT.cbeam = new THREE.MeshBasicMaterial({ color: 0x4aa8ff, transparent: true, opacity: .3, depthWrite: false });
+  if (!crateShow) { crateShow = { show: new THREE.Group(), models: {} }; levelGroup.add(crateShow.show);
+    for (const id in WEAPONS) { if (id === 'pistol') continue; const m = buildGun(id, false); m.scale.setScalar(1.6); m.rotation.y = Math.PI / 2; m.visible = false; crateShow.show.add(m); crateShow.models[id] = m; } }
+  const beam = new THREE.Mesh(KGEO.glowBox, MAT.cbeam); beam.scale.set(.07, 7, .07); beam.position.y = 4.2; g.add(beam);   // thin light so crates can be found from a distance
+  crateObj = { g, lidP, glow: spot(x, 1.2, z, 0x4aa8ff, .8, 8, 0), show: crateShow.show, models: crateShow.models, x, z, y: PY };
+  interactables.push({ type: 'crate', x, z, cost: COST.crate, range: 2.4, ref: crateObj });
 }
 function addStation(type, x, z) {
   const g = new THREE.Group(); g.position.set(x, 0, z);
@@ -1313,6 +1375,9 @@ function updateFX(dt) {
   dust.position.set(Math.round(camera.position.x / 12) * 12, 1.8 + Math.sin(G.time * .2) * .3, Math.round(camera.position.z / 12) * 12);
   dust.rotation.y = G.time * .01;
   updateLights(dt);
+  { const cur = OBJ.list[G.oi] || {}, bl = Math.sin(G.time * 7) > 0;
+    OBJ.gens.forEach((t, i) => t.lamp.material.color.setHex((G.og >> i) & 1 ? 0x30ff50 : bl ? 0xff2010 : 0x400804));
+    OBJ.sups.forEach((t, i) => { t.m.visible = cur.t === 'sup' && !((G.om >> i) & 1); t.m.rotation.y += dt * .8; }); if (OBJ.zone) OBJ.zone.m.visible = cur.t === 'hold'; }
 }
 function bloodDecal(x, z, y) { const m = bloods[bloodI = (bloodI + 1) % bloods.length]; m.position.set(x, (y || 0) + .015 + bloodI * .0004, z); m.rotation.y = rnd(0, 6); const s = rnd(.6, 1.3); m.scale.set(s, 1, s); m.visible = true; }
 
@@ -1379,6 +1444,7 @@ function promptFor(it) {
   if (it.type === 'door') return `Press <b>E</b> to clear the barricade to ${DOORS[it.id].name} &nbsp;[${it.cost}]`;
   if (it.type === 'crate') return L.crateT > 0 ? '' : `Press <b>E</b> to open the Mystery Crate — random weapon &nbsp;[${it.cost}]`;
   if (it.type === 'ammo') return `Press <b>E</b> to restock ammo &nbsp;[${it.cost}]`;
+  if (it.type === 'gen') return (G.og >> it.id) & 1 ? 'Generator running' : 'Press <b>E</b> to start the generator — the noise will draw them';
   if (it.type === 'evac') return G.evacT > 0 ? 'Extraction inbound — hold the roof' : G.round < EVAC_WAVE ? `Extraction unlocks at wave ${EVAC_WAVE}` : `Press <b>E</b> to call extraction — then hold the roof for ${EVAC_TIME} seconds`;
   return me.maxHp > 100 ? 'Field Stim already taken' : `Press <b>E</b> for Field Stim — double health &nbsp;[${it.cost}]`;
 }
@@ -1386,8 +1452,10 @@ function requestBuy(it) {
   if (it.type === 'crate' && L.crateT > 0) return;
   if (it.type === 'stim' && me.maxHp > 100) return;
   if (it.type === 'evac' && (G.round < EVAC_WAVE || G.evacT > 0)) return;
+  if (it.type === 'gen') { if ((G.og >> it.id) & 1) return; sNoise(90, 1.4, .6); sTone(55, 1.6, .4, 'sawtooth', 0, 80); }
   if (me.points < it.cost) { sTone(140, .18, .25, 'square'); return; }
-  const m = { t: 'buy', k: it.type, i: it.id || '', own: L.weapons.map(w => w.id) };
+  if (it.type === 'crate') L.crateRef = it.ref;
+  const m = { t: 'buy', k: it.type, i: it.id === undefined ? '' : it.id, own: L.weapons.map(w => w.id) };
   if (G.host) hostBuy(G.myId, m); else netSend(m);
 }
 function hostBuy(pid, m) {
@@ -1396,6 +1464,7 @@ function hostBuy(pid, m) {
   else if (m.k === 'crate') { if (p.points < COST.crate) return; p.points -= COST.crate; const own = m.own || []; const pool = Object.keys(WEAPONS).filter(k => k !== 'pistol' && own.indexOf(k) < 0); w = pool[(Math.random() * pool.length) | 0]; }
   else if (m.k === 'ammo') { if (p.points < COST.ammo) return; p.points -= COST.ammo; }
   else if (m.k === 'stim') { if (p.points < COST.stim || p.maxHp > 100) return; p.points -= COST.stim; p.maxHp = 200; p.hp = 200; }
+  else if (m.k === 'gen') { const cur = OBJ.list[G.oi], i = m.i | 0; if (!cur || cur.t !== 'gen' || !OBJ.gens[i] || (G.og >> i) & 1) return; G.og |= 1 << i; p.points += 250; G.toSpawn += 4; hostSay('GENERATOR ' + bits(G.og) + '/' + cur.n + ' RUNNING'); return; }
   else if (m.k === 'evac') { if (!EVAC || G.round < EVAC_WAVE || G.evacT > 0) return; G.evacT = EVAC_TIME; G.toSpawn += 20; hostSay('EXTRACTION INBOUND — HOLD THE ROOF'); return; }
   else return;
   const ok = { t: 'ok', k: m.k, i: m.i, w };
@@ -1472,12 +1541,35 @@ function startRound() {
   G.toSpawn = Math.round((5 + G.round * 2.6) * (1 + .55 * (n - 1))); G.spawnT = 1.5;
   for (const id in players) { const p = players[id]; if (p.down) { p.down = false; p.hp = p.maxHp; } }
 }
+const bits = v => { let n = 0; while (v) { n += v & 1; v >>= 1; } return n; };
+function objDone(cur) { G.oi++; G.op = 0; for (const id in players) players[id].points += 750; hostSay('OBJECTIVE COMPLETE  +750'); hostEvent('pick'); }
+function objUpdate(dt, alive) {
+  const cur = OBJ.list[G.oi]; if (!cur) return; const at = (p, t, r) => (p.l || 0) === t.l && Math.hypot(p.x - t.x, p.z - t.z) < r;
+  if (cur.t === 'gen') { if (bits(G.og) >= cur.n) objDone(cur); }
+  else if (cur.t === 'sup') { OBJ.sups.forEach((t, i) => { if ((G.om >> i) & 1) return; const p = alive.find(q => at(q, t, 1.6)); if (!p) return; G.om |= 1 << i; p.points += 300;
+      const ok = { t: 'ok', k: 'ammo' }; if (p.id === G.myId) onBuyOk(ok); else if (Net.conns[p.id]) Net.conns[p.id].send(ok); hostSay('SUPPLY CASE ' + bits(G.om) + '/' + cur.n); });
+    if (bits(G.om) >= cur.n) objDone(cur); }
+  else if (cur.t === 'hold') { if (alive.some(p => at(p, OBJ.zone, 5))) { G.op += dt; if (G.toSpawn < 6 && G.state === 'wave') G.toSpawn = 6; } if (G.op >= cur.n) objDone(cur); }
+}
+function objText() {   // HUD line: what to do, how far along, and which way to go
+  const cur = OBJ.list[G.oi]; if (!cur) return OBJ.list.length ? 'All objectives complete — survive' : '';
+  let prog = '', tg = null; const nearest = (arr, mask) => { let b = null, bd = 1e9; arr.forEach((t, i) => { if ((mask >> i) & 1) return; const d = Math.hypot(t.x - me.x, t.z - me.z) + Math.abs(t.l - (me.l || 0)) * 30; if (d < bd) { bd = d; b = t; } }); return b; };
+  if (cur.t === 'gen') { prog = bits(G.og) + '/' + cur.n; tg = nearest(OBJ.gens, G.og); }
+  else if (cur.t === 'sup') { prog = bits(G.om) + '/' + cur.n; tg = nearest(OBJ.sups, G.om); }
+  else if (cur.t === 'hold') { prog = Math.floor(G.op) + '/' + cur.n + 's'; tg = OBJ.zone; }
+  else if (cur.t === 'evac') { if (G.evacT > 0) return ''; prog = G.round < EVAC_WAVE ? 'unlocks at wave ' + EVAC_WAVE : 'ready'; tg = EVAC; }
+  let way = '';
+  if (tg) { const dx = tg.x - me.x, dz = tg.z - me.z, f = -dx * Math.sin(me.yaw) - dz * Math.cos(me.yaw), r = dx * Math.cos(me.yaw) - dz * Math.sin(me.yaw);
+    way = ' &nbsp;<b>' + ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'][(Math.round(Math.atan2(r, f) / (Math.PI / 4)) + 8) % 8] + ' ' + Math.round(Math.hypot(dx, dz)) + 'm</b>' + (tg.l > (me.l || 0) ? ' ▲ upstairs' : tg.l < (me.l || 0) ? ' ▼ downstairs' : ''); }
+  return 'Objective ' + (G.oi + 1) + '/' + OBJ.list.length + ': ' + cur.title + ' (' + prog + ')' + way;
+}
 function hostUpdate(dt) {
   if (G.over) return;
   flowT -= dt; if (flowT <= 0) { flowT = .25; buildFlow(); }
   const all = Object.values(players), alive = all.filter(p => !p.down);
   if (all.length && !alive.length) { G.over = true; G.state = 'over'; sendSnapshot(); gameOver(); return; }
   if (G.insta > 0) G.insta -= dt;
+  objUpdate(dt, alive);
   if (G.evacT > 0) {   // extraction called: hold the roof until the timer runs out
     G.evacT -= dt; if (G.toSpawn < 8) G.toSpawn = 8; if (G.state === 'inter') { G.state = 'wave'; G.spawnT = .5; }
     if (G.evacT <= 0) { G.evacT = 0;
@@ -1522,7 +1614,7 @@ function hostUpdate(dt) {
 const r2 = v => Math.round(v * 100) / 100;
 function sendSnapshot() {
   if (!Object.keys(Net.conns).length) return;
-  broadcast({ t: 's', r: G.round, st: G.state, it: r2(G.interT), left: G.toSpawn + zombies.length, insta: r2(Math.max(0, G.insta)), ev: r2(G.evacT || 0), doors: Object.keys(doorOpen).join(''),
+  broadcast({ t: 's', r: G.round, st: G.state, it: r2(G.interT), left: G.toSpawn + zombies.length, insta: r2(Math.max(0, G.insta)), ev: r2(G.evacT || 0), o: [G.oi, r2(G.op), G.og, G.om], doors: Object.keys(doorOpen).join(''),
     P: Object.values(players).map(p => [p.id, p.name, r2(p.x), r2(p.y), r2(p.z), r2(p.yaw), r2(p.pitch), Math.round(p.hp), p.maxHp, p.down ? 1 : 0, p.points, p.kills, p.wid, p.fireSeq, p.ci | 0, p.l | 0]),
     Z: zombies.map(z => [z.id, r2(z.x), r2(z.z), r2(z.rot), r2(z.rise), z.atk > 0 ? 1 : 0, r2(z.y || 0), ZT.indexOf(z.type)]), D: drops.map(d => [d.id, d.type, r2(d.x), r2(d.z), r2(d.y || 0)]) });
 }
@@ -1547,7 +1639,7 @@ function clientRecv(m) {
   if (m.t === 'ev') return onEvent(m.k);
   if (m.t === 'msg') return showMsg(String(m.s).slice(0, 40), 2.5);
   if (m.t !== 's') return;
-  G.round = m.r; G.state = m.st; G.interT = m.it; G.left = m.left; G.insta = m.insta; G.evacT = m.ev || 0;
+  G.round = m.r; G.state = m.st; G.interT = m.it; G.left = m.left; G.insta = m.insta; G.evacT = m.ev || 0; if (m.o) { G.oi = m.o[0] | 0; G.op = +m.o[1] || 0; G.og = m.o[2] | 0; G.om = m.o[3] | 0; }
   for (const ch of m.doors) if (!doorOpen[ch]) openDoor(ch);
   const seenP = {};
   for (const a of m.P) { const id = a[0]; seenP[id] = 1; let p = players[id]; if (!p) { p = players[id] = newPlayer(id, a[1]); }
@@ -1596,9 +1688,9 @@ function updateLocal(dt) {
   const wantAds = mouse.r && L.reloadT <= 0 && !L.sprint ? 1 : 0; L.ads += (wantAds - L.ads) * Math.min(1, dt * 14);
   L.kick = Math.max(0, L.kick - dt * 9); L.hitFx = Math.max(0, L.hitFx - dt * 5); L.hurt = Math.max(0, L.hurt - dt * 1.2);
   // crate animation
-  if (L.crateT > 0) { L.crateT -= dt; const c = crateObj, k = 3.4 - L.crateT; c.lidP.rotation.x = -Math.min(1, k * 3) * 1.3; c.glow.base = 1.7;
+  if (L.crateT > 0) { L.crateT -= dt; const c = L.crateRef || crateObj, k = 3.4 - L.crateT; c.lidP.rotation.x = -Math.min(1, k * 3) * 1.3; c.glow.base = 1.7;
     const ids = Object.keys(c.models), showId = L.crateT < .9 ? L.crateW : ids[Math.floor(k * 8) % ids.length];
-    for (const id of ids) c.models[id].visible = id === showId; c.show.position.y = 1 + Math.min(.5, k * .4); c.show.rotation.y += dt * 1.5;
+    for (const id of ids) c.models[id].visible = id === showId; c.show.position.set(c.x, c.y + 1 + Math.min(.5, k * .4), c.z); c.show.rotation.y += dt * 1.5;
     if (L.crateT <= 0) { for (const id of ids) c.models[id].visible = false; c.lidP.rotation.x = 0; c.glow.base = .8; giveWeapon(L.crateW); showMsg(WEAPONS[L.crateW].name.toUpperCase(), 2); sNoise(2200, .08, .3); } }
   // camera
   const bobY = moving ? Math.sin(L.bob * 2) * (L.sprint ? .055 : .03) * (1 - L.ads * .7) : 0;
@@ -1686,7 +1778,7 @@ function updateHUD(dt) {
   $('hit').style.opacity = L.hitFx; $('cross').style.opacity = L.ads > .5 || me.down ? 0 : 1;
   const it = nearestInteractable(); setH('prompt', me.down ? 'You are down. You get back up if your team survives the wave.' : it ? promptFor(it) : '');
   setH('power', G.evacT > 0 ? 'EXTRACTION IN ' + Math.ceil(G.evacT) + (EVAC && (me.l || 0) !== EVAC.l ? ' — GET TO THE ROOF' : '') : G.insta > 0 ? 'OVERKILL ' + Math.ceil(G.insta) : '');
-  setH('obj', EVAC && !G.evacT ? (G.round < EVAC_WAVE ? 'Objective: survive to wave ' + EVAC_WAVE + ', then climb the tower south of the plaza' : 'Objective: climb the tower and call extraction from the roof') : '');
+  setH('obj', objText());
   if (G.round !== lastRound) { if (G.round > 0) { showMsg('WAVE ' + G.round, 3.5); sTone(98, 2.2, .3, 'sawtooth', 0, 49); sTone(147, 2.2, .2, 'sawtooth', .1, 73); } lastRound = G.round; }
   if (msgT > 0) { msgT -= dt; $('msg').style.opacity = Math.min(1, msgT * 2); } else $('msg').style.opacity = 0;
   $('lockhint').style.display = document.pointerLockElement || G.over ? 'none' : 'block';
@@ -1783,7 +1875,7 @@ function init() {
   for (const id in MAPS) { const b = document.createElement('button'); b.className = 'mapbtn' + (id === MAPID ? ' sel' : ''); b.innerHTML = '<b>' + MAPS[id].name + '</b><span>' + MAPS[id].desc + '</span>';
     b.onclick = () => { if (G.started || id === MAPID) return; loadMap(id); document.querySelectorAll('.mapbtn').forEach(x => x.classList.remove('sel')); b.classList.add('sel'); }; $('maps').appendChild(b); }
   const jq = new URLSearchParams(location.search).get('join'); if (jq) { $('joincode').value = jq.toUpperCase().slice(0, 5); status('Invite code filled in — press Join game.'); }
-  window.HW = { hostBuy, killZombie, G, players, zombies, L, Net, MAPS, loadMap, hostHit, spawnZombie, drops, fire, melee, dealHit, camera: () => camera, WEAPONS, giveWeapon, navStep, groundY, tileL, moveCollide, map: () => ({ MAP, LAYERS, NL, EVAC, W, H, id: MAPID, spawn: SPAWN, zSpawns, colliders, lightSpots, interactables, navBlock, flow }) };
+  window.HW = { hostBuy, obj: () => OBJ, killZombie, G, players, zombies, L, Net, MAPS, loadMap, hostHit, spawnZombie, drops, fire, melee, dealHit, camera: () => camera, WEAPONS, giveWeapon, navStep, groundY, tileL, moveCollide, map: () => ({ MAP, LAYERS, NL, EVAC, W, H, id: MAPID, spawn: SPAWN, zSpawns, colliders, lightSpots, interactables, navBlock, flow }) };
   frame();
 }
 let lastFrame = 0, lastTick = 0;
