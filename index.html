@@ -14,10 +14,11 @@
   #hud{display:none}
   #cross{position:fixed;left:50%;top:50%;width:0;height:0}
   #cross i{position:absolute;background:rgba(230,230,220,.8);box-shadow:0 0 2px #000}
-  #cross i:nth-child(1){width:2px;height:8px;left:-1px;top:-16px}
-  #cross i:nth-child(2){width:2px;height:8px;left:-1px;top:8px}
-  #cross i:nth-child(3){width:8px;height:2px;left:-16px;top:-1px}
-  #cross i:nth-child(4){width:8px;height:2px;left:8px;top:-1px}
+  #cross i:nth-child(1){width:2px;height:7px;left:-1px;top:calc(-7px - var(--g,8px))}
+  #cross i:nth-child(2){width:2px;height:7px;left:-1px;top:var(--g,8px)}
+  #cross i:nth-child(3){width:7px;height:2px;left:calc(-7px - var(--g,8px));top:-1px}
+  #cross i:nth-child(4){width:7px;height:2px;left:var(--g,8px);top:-1px}
+  #cross i:nth-child(5){width:2px;height:2px;left:-1px;top:-1px}
   #hit{position:fixed;left:50%;top:50%;width:22px;height:22px;margin:-11px 0 0 -11px;opacity:0;
     background:linear-gradient(45deg,transparent 46%,#fff 46%,#fff 54%,transparent 54%),linear-gradient(-45deg,transparent 46%,#fff 46%,#fff 54%,transparent 54%)}
   #round{position:fixed;left:28px;bottom:20px;font:900 74px Georgia,serif;color:#8e0d0d;text-shadow:0 0 14px #300,0 2px 2px #000;letter-spacing:2px}
@@ -72,7 +73,7 @@
 <div id="hurt" class="ov"></div>
 
 <div id="hud" class="ov">
-  <div id="cross"><i></i><i></i><i></i><i></i></div>
+  <div id="cross"><i></i><i></i><i></i><i></i><i></i></div>
   <div id="hit"></div>
   <div id="left"></div>
   <div id="obj"></div>
