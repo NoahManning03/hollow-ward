@@ -97,7 +97,7 @@ const players = {}; let me = null;
 const zombies = [], zById = {}, corpses = []; let zSeq = 1;
 const drops = []; let dropSeq = 1;
 const L = { vy: 0, onGround: true, bob: 0, weapons: [], wi: 0, fireT: 0, reloadT: 0, switchT: 0, ads: 0, kick: 0, fired: false,
-  meleeT: 0, meleeHit: false, jy: 0, burstN: 0, flash: true, crateT: 0, crateW: null, lastHp: 100, hurt: 0, wasDown: false, hitFx: 0, sprint: false, stepPh: 0 };
+  meleeT: 0, meleeHit: false, jy: 0, burstN: 0, nearZ: 99, stingT: -99, ambT: 12, hbT: 0, flick: 0, flash: true, crateT: 0, crateW: null, lastHp: 100, hurt: 0, wasDown: false, hitFx: 0, sprint: false, stepPh: 0 };
 const keys = {}, mouse = { l: false, r: false };
 const Net = { peer: null, conns: {}, conn: null, sendT: 0 };
 let flashlight, muzzleLight, remoteFlash, zGroup, propGroup, doorGroup, shootables = [];
@@ -108,7 +108,7 @@ const lerpAngle = (a, b, t) => { let d = ((b - a + Math.PI) % (Math.PI * 2) + Ma
 function seeded(s) { return () => { s = (s * 16807 + 11) % 2147483647; return (s & 0xffff) / 0x10000; }; }
 
 // ---------------------------------------------------------------- audio
-let AC = null, master = null, noiseBuf = null;
+let AC = null, master = null, noiseBuf = null, shaper = null;
 function initAudio() {
   if (AC) return;
   try {
@@ -123,7 +123,12 @@ function initAudio() {
     const lfo = AC.createOscillator(); lfo.frequency.value = .09; const lg = AC.createGain(); lg.gain.value = .05;
     lfo.connect(lg).connect(g.gain); lfo.start();
     n.connect(f).connect(g).connect(master); n.start();
-    for (const fr of [46, 49.5]) { const o = AC.createOscillator(); o.frequency.value = fr; const og = AC.createGain(); og.gain.value = .05; o.connect(og).connect(master); o.start(); }
+    // uneasy drone: close, beating low tones with a slow swell, plus a thin high whine that drifts
+    const dg = AC.createGain(); dg.gain.value = .05; dg.connect(master); const dl = AC.createOscillator(); dl.frequency.value = .05; const dlg = AC.createGain(); dlg.gain.value = .03; dl.connect(dlg).connect(dg.gain); dl.start();
+    for (const fr of [41, 43.6, 58.3, 61.7]) { const o = AC.createOscillator(); o.type = fr > 50 ? 'triangle' : 'sine'; o.frequency.value = fr; const og = AC.createGain(); og.gain.value = fr > 50 ? .35 : 1; o.connect(og).connect(dg); o.start(); }
+    const hw = AC.createOscillator(); hw.frequency.value = 1870; const hwl = AC.createOscillator(); hwl.frequency.value = .07; const hwlg = AC.createGain(); hwlg.gain.value = 60; hwl.connect(hwlg).connect(hw.frequency); hwl.start();
+    const hwg = AC.createGain(); hwg.gain.value = .0035; hw.connect(hwg).connect(master); hw.start();
+    shaper = AC.createWaveShaper(); const cv = new Float32Array(256); for (let i = 0; i < 256; i++) { const x = i / 128 - 1; cv[i] = Math.tanh(x * 5); } shaper.curve = cv;
   } catch (e) { AC = null; }
 }
 function sNoise(freq, dur, vol, type) {
@@ -146,13 +151,40 @@ function sShot(kind, vol) {
   const P = SHOT[kind] || SHOT.pistol; vol = vol === undefined ? 1 : vol; if (vol < .02) return;
   sNoise(P[0], P[1], P[2] * vol); sNoise(300, .6, .18 * vol); sTone(150, .14, .7 * vol, 'sine', 0, 40);
 }
-function sGroan(vol) {
-  if (!AC || vol < .02) return; const t = AC.currentTime, d = rnd(.7, 1.6), f0 = rnd(55, 110);
-  const o = AC.createOscillator(); o.type = 'sawtooth'; o.frequency.setValueAtTime(f0, t); o.frequency.linearRampToValueAtTime(f0 * rnd(.6, 1.5), t + d);
-  const lfo = AC.createOscillator(); lfo.frequency.value = rnd(17, 34); const lg = AC.createGain(); lg.gain.value = 14; lfo.connect(lg).connect(o.frequency);
-  const f = AC.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = rnd(420, 900); f.Q.value = 2.5;
-  const g = AC.createGain(); g.gain.setValueAtTime(.0001, t); g.gain.linearRampToValueAtTime(.55 * vol, t + .12); g.gain.exponentialRampToValueAtTime(.001, t + d);
-  o.connect(f).connect(g).connect(master); o.start(t); lfo.start(t); o.stop(t + d + .1); lfo.stop(t + d + .1);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+function outNode(pan) { if (pan && AC.createStereoPanner) { const p = AC.createStereoPanner(); p.pan.value = clamp(pan, -1, 1); p.connect(master); return p; } return master; }
+// where a sound is, left to right, relative to the way you are facing
+function panOf(x, z) { if (!me) return 0; const dx = x - me.x, dz = z - me.z; return clamp((dx * Math.cos(me.yaw) - dz * Math.sin(me.yaw)) / Math.max(2.5, Math.hypot(dx, dz)), -1, 1); }
+function voice(f0, f1, dur, vol, pan, o) {   // gritty throat sound: two detuned saws, growl tremolo, moving formant, distortion
+  if (!AC || vol < .02) return; const t = AC.currentTime, out = outNode(pan), g = AC.createGain(), f = AC.createBiquadFilter(), ws = AC.createWaveShaper(); ws.curve = shaper.curve;
+  f.type = 'bandpass'; f.Q.value = o.q || 2.5; f.frequency.setValueAtTime(o.fa, t); f.frequency.linearRampToValueAtTime(o.fb, t + dur * .5); f.frequency.linearRampToValueAtTime(o.fc || o.fa, t + dur);
+  g.gain.setValueAtTime(.0001, t); g.gain.linearRampToValueAtTime(vol, t + (o.att || .08)); g.gain.setValueAtTime(vol, t + dur * .6); g.gain.exponentialRampToValueAtTime(.001, t + dur);
+  const am = AC.createGain(); am.gain.value = 1 - (o.am || 0) / 2; const al = AC.createOscillator(); al.type = 'square'; al.frequency.value = o.amf || 38; const alg = AC.createGain(); alg.gain.value = (o.am || 0) / 2; al.connect(alg).connect(am.gain);
+  for (const det of [1, 1.013, o.oct ? .5 : 1.5]) { const os = AC.createOscillator(); os.type = 'sawtooth'; os.frequency.setValueAtTime(f0 * det, t); os.frequency.linearRampToValueAtTime(f1 * det, t + dur * .45); os.frequency.linearRampToValueAtTime(f0 * det * (o.end || .8), t + dur);
+    const vl = AC.createOscillator(); vl.frequency.value = o.vib || 9; const vg = AC.createGain(); vg.gain.value = f0 * (o.vibd || .03); vl.connect(vg).connect(os.frequency); vl.start(t); vl.stop(t + dur + .1); os.connect(am); os.start(t); os.stop(t + dur + .1); }
+  if (o.noise) { const n = AC.createBufferSource(); n.buffer = noiseBuf; const ng = AC.createGain(); ng.gain.value = o.noise; n.connect(ng).connect(am); n.start(t, Math.random()); n.stop(t + dur + .1); }
+  am.connect(ws).connect(f).connect(g).connect(out); al.start(t); al.stop(t + dur + .1);
+}
+function sGroan(vol, pan) { const f = rnd(48, 95); voice(f, f * rnd(.7, 1.4), rnd(.9, 2), .5 * vol, pan, { fa: rnd(300, 500), fb: rnd(500, 900), fc: 300, am: .8, amf: rnd(24, 46), oct: 1, noise: .25 }); }
+function sSnarl(vol, pan) { const f = rnd(110, 170); voice(f, f * 1.9, rnd(.35, .6), .6 * vol, pan, { fa: 700, fb: 1700, fc: 900, am: .9, amf: rnd(40, 70), att: .02, noise: .5, q: 1.8 }); }
+function sScream(vol, pan) { const f = rnd(420, 640); voice(f, f * rnd(1.5, 2.1), rnd(.7, 1.3), .42 * vol, pan, { fa: 1300, fb: 2600, fc: 1500, am: .5, amf: rnd(50, 90), att: .03, vib: rnd(11, 19), vibd: .06, end: .55, noise: .6, q: 1.5 }); }
+function sSting() {   // jump scare: a dissonant stab with a sub drop under it
+  if (!AC) return; for (const f of [207, 220, 311, 440, 466, 932]) sTone(f, 1.3, .1, 'sawtooth', 0, f * .97); sNoise(1800, .25, .5, 'highpass'); sTone(120, .9, .7, 'sine', 0, 28);
+}
+function sHeart(v) { sTone(58, .13, .5 * v, 'sine', 0, 34); sTone(52, .15, .38 * v, 'sine', .21, 30); }
+function sWhisper(vol) {
+  if (!AC) return; const t = AC.currentTime, d = rnd(1.4, 2.8), n = AC.createBufferSource(); n.buffer = noiseBuf; n.loop = true; const f = AC.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 7;
+  f.frequency.setValueAtTime(rnd(1200, 2400), t); for (let i = 1; i < 9; i++) f.frequency.linearRampToValueAtTime(rnd(900, 3200), t + d * i / 9);
+  const g = AC.createGain(); g.gain.setValueAtTime(.0001, t); for (let i = 1; i < 12; i++) g.gain.linearRampToValueAtTime(i % 2 ? .1 * vol : .015 * vol, t + d * i / 12); g.gain.linearRampToValueAtTime(.0001, t + d);
+  n.connect(f).connect(g).connect(outNode(rnd(-1, 1))); n.start(t, Math.random()); n.stop(t + d + .1);
+}
+function sThunder() { sNoise(70, 2.6, .9); sNoise(160, 1.2, .5); sTone(48, 2.2, .5, 'sine', 0, 26); }
+function sClang(vol, pan) { if (!AC) return; const t = AC.currentTime, out = outNode(pan); for (const f of [173, 311, 487, 742, 1130]) { const o = AC.createOscillator(); o.frequency.value = f * rnd(.98, 1.02); const g = AC.createGain(); g.gain.setValueAtTime(vol * .12, t); g.gain.exponentialRampToValueAtTime(.0005, t + rnd(1.2, 2.6)); o.connect(g).connect(out); o.start(t); o.stop(t + 2.8); } }
+function ambientEvent() {   // things you hear but never find
+  const k = Math.random(), pan = rnd(-1, 1);
+  if (k < .22) sScream(rnd(.1, .22), pan); else if (k < .42) sWhisper(rnd(.5, 1)); else if (k < .58) sClang(rnd(.3, .7), pan);
+  else if (k < .74) { for (let i = 0; i < 3; i++) setTimeout(() => sNoise(110, .1, .35), i * rnd(260, 420)); } else if (k < .88) sGroan(rnd(.2, .4), pan);
+  else { for (let i = 0; i < 5; i++) setTimeout(() => sNoise(150, .06, .12 + i * .04), i * 330); }   // footsteps coming closer
 }
 const distVol = (x, z, range) => me ? Math.max(0, 1 - Math.hypot(x - me.x, z - me.z) / range) : 0;
 
@@ -199,7 +231,7 @@ function bumpTex() {
 
 // ---------------------------------------------------------------- level kit
 const MAT = {}, KGEO = {};
-let levelGroup = null, glowMesh = null, skyGroup = null, hemi = null, sun = null, lightT = 0;
+let levelGroup = null, glowMesh = null, skyGroup = null, hemi = null, sun = null, lightT = 0, blackT = 0, blackNext = 50, flashT = 0, flashNext = 20;
 const lightSpots = [], pool = [], weatherPts = [];
 let LR = Math.random;                         // seeded while a map is generated, so every player builds the identical level
 const lr = (a, b) => a + LR() * (b - a), lpick = n => (LR() * n) | 0;
@@ -343,9 +375,12 @@ Object.assign(KITS, {
   heli: K => { K.g(new THREE.SphereGeometry(1, 14, 10), M(0, 0, .6, 0, 0, 0, 1.3, 1.25, 2.6), 0x2c3327).g(new THREE.SphereGeometry(1, 12, 8), M(0, .15, 2.2, 0, 0, 0, 1.1, .85, 1.1), 0x10161a)
      .g(q4(.12, .4, 5), M(0, .35, -4.3, -Math.PI / 2, 0, 0), 0x2c3327).b(.1, 1.5, .9, 0, 1.0, -6.6, 0x2c3327).c(.2, .26, .6, 0, 1.45, .4, 0x1c1e20, 8).b(2.4, .5, 1.6, 0, .1, .4, 0x262c22);
     for (const s of [-1.1, 1.1]) K.b(.1, .1, 4.2, s, -1.5, .6, 0x151515).seg(.04, .04, [s * .8, -.9, 1.6], [s, -1.5, 1.6], 0x151515, 5).seg(.04, .04, [s * .8, -.9, -.4], [s, -1.5, -.4], 0x151515, 5).b(.05, .5, 1.2, s * 1.28, .2, .5, 0x10161a); },
+  pool: K => K.c(1, 1, .01, 0, 0, 0, 0x2a0403, 14).c(.45, .45, .011, .9, 0, .5, 0x2a0403, 10).c(.3, .3, .011, -.8, 0, -.7, 0x2a0403, 8).b(.25, .011, 1.6, .3, 0, 1.4, 0x2a0403, 0, .3, 0),
+  hang: K => { K.c(.012, .012, 1.0, 0, 3.1, 0, 0x2a2118, 5).s(.25, 0, 1.72, 0, 0x1c1916, 1, 2.7, .95).s(.13, 0, 2.5, .02, 0x1c1916, 1, 1.1, 1).c(.26, .2, .05, 0, 2.2, 0, 0x2a2118, 10).c(.25, .22, .05, 0, 1.5, 0, 0x2a2118, 10).c(.16, .1, .05, 0, 1.12, 0, 0x2a2118, 10)
+     .s(.1, .06, 1.02, 0, 0x4a5244, 1, 1.6, 1).s(.1, -.07, .98, .02, 0x4a5244, 1, 1.6, 1).s(.26, 0, 1.6, .03, 0x3a0605, .96, 1.2, 1); for (let i = 0; i < 4; i++) K.b(.012, .25 + i * .08, .012, -.1 + i * .07, .78 - i * .04, .05, 0x3a0605); },
   rotor: K => K.b(11, .04, .34, 0, 0, 0, 0x151515).b(.34, .04, 11, 0, 0, 0, 0x151515).c(.16, .16, .2, 0, 0, 0, 0x2a2c2e, 8)
 });
-const METAL = { car: 1, van: 1, lamp: 1, rail: 1, dumpster: 1, locker: 1, barrel: 1, pump: 1, truck: 1, tlight: 1, gantry: 1, acunit: 1, mailbox: 1, heli: 1 }, NOSHADOW = { drift: 1, deb: 1 };
+const METAL = { car: 1, van: 1, lamp: 1, rail: 1, dumpster: 1, locker: 1, barrel: 1, pump: 1, truck: 1, tlight: 1, gantry: 1, acunit: 1, mailbox: 1, heli: 1 }, NOSHADOW = { drift: 1, deb: 1, pool: 1 };
 function kitGeo(name) { if (!KGEO[name]) { const K = Kit(); KITS[name](K); const g = K.done(); g.userData.keep = true; KGEO[name] = g; } return KGEO[name]; }
 function wallGeo(kind) {
   const key = 'w_' + kind; if (KGEO[key]) return KGEO[key];
@@ -534,6 +569,7 @@ function genWard() {
   G.clutter(['bed', 'bed', 'bed', 'locker', 'cabinet', 'desk', 'chair', 'shelf', 'bodybag'], 46, ch => ch === '.');
   G.clutter(['bench', 'box', 'barrel', 'bags'], 6, ch => ch === ',');
   G.scatter('deb', 170, ch => ch === '.'); G.scatter('rubble', 10, ch => ch === '.'); G.scatter('bodybag', 8, ch => ch === '.'); G.scatter('deb', 40, ch => ch === ',');
+  G.scatter('hang', 10, ch => ch === '.'); G.scatter('pool', 46, ch => true);
   return G;
 }
 function genWoods() {
@@ -564,6 +600,7 @@ function genWoods() {
   for (let r = 2; r < n - 2; r++) for (let c = 2; c < n - 2; c++) { if (g[r][c] !== ',' || !G.free(c, r) || LR() > .34) continue; const a = lr(0, 6.28), d = lr(.75, 1.15);
     G.deco({ k: LR() < .78 ? 'pine' : 'dtree', x: wx(c) + Math.cos(a) * d, z: wx(r) + Math.sin(a) * d, s: lr(.8, 1.4), ry: lr(0, 6) }); }
   const snow = ch => ch === ','; G.scatter('log', 46, snow); G.scatter('stump', 60, snow); G.scatter('drift', 280, snow); G.scatter('deb', 150, snow); G.scatter('deb', 30, ch => ch === '.');
+  G.scatter('pool', 40, ch => true); G.scatter('bodybag', 14, snow); G.scatter('hang', 3, ch => ch === '.');
   return G;
 }
 function genBack() {
@@ -584,9 +621,10 @@ function genBack() {
     if (!cells.length) continue; for (const [x, y] of cells) g[y][x] = '#';
     if (walk() !== total - cells.length) { for (const [x, y] of cells) g[y][x] = '.'; } else total -= cells.length; }
   G.reserve(28, 28, 1); G.add('ammo', 28, 9); G.add('stim', 28, 47); G.add('crate', 47, 47); G.reserve(28, 9, 1); G.reserve(28, 47, 1); G.reserve(47, 47, 1);
-  for (let r = 2; r < n - 1; r += 3) for (let c = 2; c < n - 1; c += 3) if (g[r][c] === '.') G.add('light', c, r, { m: LR() < .12 ? 2 : LR() < .3 ? 1 : 0 });
+  for (let r = 2; r < n - 1; r += 3) for (let c = 2; c < n - 1; c += 3) if (g[r][c] === '.') G.add('light', c, r, { m: LR() < .4 ? 2 : LR() < .75 ? 1 : 0 });
   for (let s = 0; s < 9; s++) for (let k = 0, t = 0; k < 3 && t < 400; t++) { const c = 2 + lpick(16) + (s % 3) * 19, r = 2 + lpick(16) + ((s / 3) | 0) * 19; if (!G.free(c, r) || Math.hypot(c - 28, r - 28) < 6) continue; G.add('zs', c, r); k++; }
   G.clutter(['chair', 'desk', 'cabinet', 'shelf', 'box', 'chair', 'locker', 'bags'], 80, ch => ch === '.'); G.scatter('deb', 150, ch => ch === '.'); G.scatter('rubble', 14, ch => ch === '.');
+  G.scatter('hang', 16, ch => ch === '.'); G.scatter('pool', 70, ch => true); G.scatter('bodybag', 12, ch => true);
   return G;
 }
 function genHighway() {
@@ -616,6 +654,7 @@ function genHighway() {
   for (const r of [96, 64, 28, 108, 16]) G.deco({ k: 'gantry', x: 22.5, z: wx(r) + 1.4 });
   const dirt = ch => ch === ','; G.clutter(['barrel', 'box', 'tyres', 'dumpster', 'tyres', 'bags'], 40, dirt);
   G.scatter('dtree', 34, dirt, { s: 1 }); G.scatter('sign', 14, dirt); G.scatter('deb', 360, ch => ch !== '#'); G.scatter('rubble', 36, ch => ch !== '#'); G.scatter('cone', 24, ch => ch === '='); G.scatter('bodybag', 10, ch => ch === '=');
+  G.scatter('pool', 70, ch => true); G.scatter('hang', 2, ch => ch === '.');
   return G;
 }
 function genCity() {
@@ -678,24 +717,25 @@ function genCity() {
   G.clutter(['dumpster', 'box', 'barrel', 'tyres', 'bench', 'hydrant', 'dumpster', 'bags', 'mailbox', 'bags'], 130, ch => ch === ',');
   G.clutter(['desk', 'shelf', 'locker', 'cabinet', 'chair', 'bed', 'desk', 'box'], 150, ch => ch === '.');
   G.scatter('deb', 800, ch => true); G.scatter('rubble', 90, ch => true); G.scatter('cone', 20, ch => ch === '='); G.scatter('sign', 30, ch => ch === ','); G.scatter('bodybag', 16, ch => ch !== '.');
+  G.scatter('hang', 30, ch => ch === '.'); G.scatter('pool', 160, ch => true);
   return G;
 }
 const MAPS = {
   ward: { name: 'Hollow Ward', desc: 'Abandoned hospital', seed: 101, gen: genWard,
     doors: { a: { cost: 750, name: 'the West Ward' }, b: { cost: 1250, name: 'the Courtyard' }, c: { cost: 1000, name: 'the South Hall' }, d: { cost: 1250, name: 'the Morgue' }, e: { cost: 1000, name: 'the Service Corridor' }, f: { cost: 1000, name: 'the Morgue Passage' } },
-    theme: { fog: 0x04060a, dens: .055, hemi: [0x31405c, 0x0a0a08, .22], sun: null, wall: ['wallA', 'wallB'], wk: 'in', floor: 'floor', ceil: 'ceil', ground: 'ground', road: 'asphalt', deb: 0x6a6a62, rock: 0x55585a, light: 0xd9e2b0 } },
+    theme: { fog: 0x020305, dens: .068, hemi: [0x31405c, 0x0a0a08, .11], sun: null, wall: ['wallA', 'wallB'], wk: 'in', floor: 'floor', ceil: 'ceil', ground: 'ground', road: 'asphalt', deb: 0x6a6a62, rock: 0x55585a, light: 0xd9e2b0 } },
   woods: { name: 'Winter Woods', desc: 'Snowed-in forest, cabin and camp', seed: 4242, gen: genWoods,
     doors: { a: { cost: 750, name: 'the Cabin' }, b: { cost: 1250, name: 'the Shed' } },
-    theme: { fog: 0x121c2a, dens: .036, hemi: [0x7088b4, 0x222630, .6], sun: [0x8fa8d8, .45], wall: ['plank', 'plank'], wk: 'plank', floor: 'woodfloor', ceil: 'woodfloor', ground: 'snow', road: 'snow', deb: 0xaab4c4, rock: 0x70767e, light: 0xffc880, weather: 'snow' } },
+    theme: { fog: 0x080d15, dens: .05, hemi: [0x7088b4, 0x1a1e28, .26], sun: [0x8fa8d8, .16], wall: ['plank', 'plank'], wk: 'plank', floor: 'woodfloor', ceil: 'woodfloor', ground: 'snow', road: 'snow', deb: 0xaab4c4, rock: 0x70767e, light: 0xffc880, weather: 'snow' } },
   back: { name: 'The Back Rooms', desc: 'Endless yellow maze, nine sections', seed: 777, gen: genBack,
     doors: { a: { cost: 750, name: 'the North Rooms' }, b: { cost: 750, name: 'the South Rooms' }, c: { cost: 1000, name: 'the West Rooms' }, d: { cost: 1000, name: 'the East Rooms' }, e: { cost: 1500, name: 'the Corner Rooms (all four ways in)' }, f: { cost: 1500, name: 'the Corner Rooms (all four ways in)' } },
-    theme: { fog: 0x17150a, dens: .042, hemi: [0x8a8040, 0x2a2610, .5], sun: null, wall: ['paper', 'paper'], wk: 'in', floor: 'carpet', ceil: 'ctile', ground: 'carpet', road: 'carpet', deb: 0x6a6238, rock: 0x55585a, light: 0xfff0a8, panel: true } },
+    theme: { fog: 0x090804, dens: .055, hemi: [0x8a8040, 0x2a2610, .16], sun: null, wall: ['paper', 'paper'], wk: 'in', floor: 'carpet', ceil: 'ctile', ground: 'carpet', road: 'carpet', deb: 0x6a6238, rock: 0x55585a, light: 0xfff0a8, panel: true } },
   highway: { name: 'Dead Highway', desc: 'Long ruined road, wrecks and trucks', seed: 9090, gen: genHighway,
     doors: { a: { cost: 750, name: 'the Checkpoint' }, b: { cost: 1250, name: 'the Overpass' }, c: { cost: 1000, name: 'the Gas Station' } },
-    theme: { fog: 0x1c120d, dens: .024, hemi: [0x8a6a5a, 0x1a1410, .8], sun: [0xd88050, .6], wall: ['concrete', 'concrete'], wk: 'rib', floor: 'floor', ceil: 'ceil', ground: 'dirt', road: 'asphalt', deb: 0x4a4a48, rock: 0x4a4440, light: 0xffb060, weather: 'ember' } },
+    theme: { fog: 0x0c0705, dens: .034, hemi: [0x8a6a5a, 0x1a1410, .3], sun: [0xd88050, .2], wall: ['concrete', 'concrete'], wk: 'rib', floor: 'floor', ceil: 'ceil', ground: 'dirt', road: 'asphalt', deb: 0x4a4a48, rock: 0x4a4440, light: 0xffb060, weather: 'ember' } },
   city: { name: 'Broken City', desc: 'Huge city. Climb the tower and extract from the roof', seed: 31337, gen: genCity,
     doors: { a: { cost: 750, name: 'the Armory' }, b: { cost: 1000, name: 'the Clinic' } },
-    theme: { fog: 0x10131a, dens: .022, hemi: [0x6a7ca4, 0x16161a, .75], sun: [0x8aa0d0, .5], wall: ['wallA', 'wallB'], wk: 'in', bwall: 'brick', facade: 'facade', floor: 'floor', ceil: 'ceil', ground: 'sidewalk', road: 'asphalt', deb: 0x5a5a58, rock: 0x55585a, light: 0xffc890, weather: 'ember' } }
+    theme: { fog: 0x06080c, dens: .032, hemi: [0x6a7ca4, 0x16161a, .26], sun: [0x8aa0d0, .16], wall: ['wallA', 'wallB'], wk: 'in', bwall: 'brick', facade: 'facade', floor: 'floor', ceil: 'ceil', ground: 'sidewalk', road: 'asphalt', deb: 0x5a5a58, rock: 0x55585a, light: 0xffc890, weather: 'ember' } }
 };
 
 // ---------------------------------------------------------------- level build
@@ -824,6 +864,7 @@ function placeProp0(p) {
     for (const q of [[-3.6, -3.6], [3.6, -3.6], [-3.6, 3.6], [3.6, 3.6]]) { put('cube', x + q[0], .2, z + q[1], 0, .16, .4, .16, 0x202224); spot(x + q[0], .6, z + q[1], 0xff3020, .9, 7, 1, glow(x + q[0], .45, z + q[1], .14, .14, .14, 0xff3020)); }
     interactables.push({ type: 'evac', x, z, cost: 0, range: 3.6 }); }
   else if (k === 'deb') for (let i = 0, n = 1 + lpick(3); i < n; i++) { const s = lr(.06, .26); put('deb', x + lr(-.5, .5), -s * .1, z + lr(-.5, .5), lr(0, 6), s, s * lr(.4, 1), s * lr(.7, 1.5), T.deb, lr(0, .5), lr(0, .5)); }
+  else if (k === 'pool') put('pool', x, .012, z, lr(0, 6), lr(.4, 1.5), 1, lr(.4, 1.3));
   else if (KITS[k]) put(k, x, 0, z, lr(0, 6));
 }
 function addDoor(ch, c, r) {
@@ -877,14 +918,23 @@ function addStation(type, x, z) {
   g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   propGroup.add(g);
 }
-const _lc = new THREE.Color();
+const _lc = new THREE.Color(), _white = new THREE.Color(0xc8d4ff);
 function updateLights(dt) {
-  const cx = camera.position.x, cz = camera.position.z; let dirty = false;
-  for (const s of lightSpots) { const pv = s.v;
-    if (s.mode === 1) { if (Math.random() < dt * 6) s.v = Math.random() < .3 ? rnd(0, .25) : rnd(.7, 1); }
+  const cx = camera.position.x, cz = camera.position.z, T = THEME; let dirty = false;
+  if (G.started && !G.over) {
+    blackNext -= dt; if (blackNext <= 0 && lightSpots.length > 3) { blackNext = rnd(45, 100); blackT = rnd(3.5, 7); sTone(240, 1.2, .4, 'sawtooth', 0, 28); setTimeout(() => sWhisper(1), 900); if (Math.random() < .5) setTimeout(() => sScream(.25, rnd(-1, 1)), 2200); }
+    flashNext -= dt; if (flashNext <= 0) { flashNext = rnd(14, 42); if (T.sun) { flashT = .6; setTimeout(sThunder, rnd(300, 1800)); } }
+    L.ambT -= dt; if (L.ambT <= 0) { L.ambT = rnd(6, 16); ambientEvent(); }
+  }
+  // blackout: every light dies for a few seconds, then stutters back
+  let bo = 1; if (blackT > 0) { blackT -= dt; bo = blackT < .5 && Math.random() < .5 ? .7 : 0; }
+  let fl = 0; if (flashT > 0) { flashT -= dt; fl = flashT > .45 || (flashT < .3 && flashT > .16) ? 1 : 0; }
+  sun.intensity = (T.sun ? T.sun[1] : 0) + fl * 2.4; hemi.intensity = T.hemi[2] + fl * 1.3; _lc.set(T.fog); if (fl) _lc.lerp(_white, .2); scene.background.copy(_lc); scene.fog.color.copy(_lc);
+  for (const s of lightSpots) {
+    if (s.mode === 1) { if (Math.random() < dt * 7) s.v = Math.random() < .42 ? rnd(0, .2) : rnd(.6, 1); }
     else if (s.mode === 2) s.v = .78 + Math.sin(G.time * 13 + s.ph) * .12 + Math.sin(G.time * 31 + s.ph * 2) * .1;
     else s.v = .93 + Math.sin(G.time * 9 + s.ph) * .04;
-    if (s.gi >= 0 && Math.abs(pv - s.v) > .02) { glowMesh.setColorAt(s.gi, _lc.copy(s.gc).multiplyScalar(.12 + s.v * .88)); dirty = true; } }
+    const tv = s.v * (s.mode === 2 ? 1 : bo); if (s.gi >= 0 && Math.abs((s.pg === undefined ? 1 : s.pg) - tv) > .02) { s.pg = tv; glowMesh.setColorAt(s.gi, _lc.copy(s.gc).multiplyScalar(.05 + tv * .95)); dirty = true; } }
   if (dirty && glowMesh.instanceColor) glowMesh.instanceColor.needsUpdate = true;
   lightT -= dt;
   if (lightT <= 0) { lightT = .2;   // only the nearest few lights are real light sources; the rest are just glowing fixtures
@@ -894,7 +944,7 @@ function updateLights(dt) {
     for (const s of near) if (s.pl < 0) { const i = pool.findIndex(p => !p.spot); if (i < 0) break; pool[i].spot = s; s.pl = i; s.a = 0; } }
   for (const p of pool) { const s = p.spot; if (!s) { p.l.intensity = 0; continue; }
     s.a = Math.min(1, s.a + dt * 3); const d = Math.hypot(s.x - cx, s.z - cz);
-    p.l.position.set(s.x, s.y, s.z); p.l.color.copy(s.col); p.l.distance = s.range; p.l.intensity = s.base * s.v * s.a * Math.max(0, Math.min(1, (36 - d) / 6)); }
+    p.l.position.set(s.x, s.y, s.z); p.l.color.copy(s.col); p.l.distance = s.range; p.l.intensity = s.base * s.v * s.a * (s.mode === 2 ? 1 : bo) * Math.max(0, Math.min(1, (36 - d) / 6)); }
   // sky + weather follow the camera
   skyGroup.position.copy(camera.position);
   const wt = THEME.weather, wch = tileL((me && me.l) || 0, Math.floor(cx / TILE), Math.floor(cz / TILE)), out = wt && (wch === ',' || wch === '=' || wch === 'J' || !G.started), S = 24;
@@ -963,14 +1013,23 @@ function initGeo() {
   const SK = [.75, .45];
   GEO.headZ = merged([[sph(.115, 22, 18), M(0, 0, 0, 0, 0, 0, .9, 1.2, 1)], [new THREE.BoxGeometry(.024, .04, .03), M(0, -.008, .112, -.25, 0, 0), SK],
     [sph(.03, 8, 6), M(.103, 0, 0, 0, 0, 0, .35, 1, .7), SK], [sph(.03, 8, 6), M(-.103, 0, 0, 0, 0, 0, .35, 1, .7), SK], [new THREE.BoxGeometry(.11, .016, .02), M(0, .05, .098, .2, 0, 0), SK]]);
-  GEO.eyes = merged([[sph(.0125, 8, 6), M(.041, .027, .094)], [sph(.0125, 8, 6), M(-.041, .027, .094)]]);
+  GEO.eyes = merged([[sph(.0165, 10, 8), M(.041, .027, .088)], [sph(.0165, 10, 8), M(-.041, .027, .088)]]);
+  const Bx = (w, h, l) => new THREE.BoxGeometry(w, h, l), tp = [], cl = [], rb = [];
+  GEO.jaw = merged([[Bx(.086, .034, .08), M(0, -.03, .05)], [Bx(.07, .022, .03), M(0, -.046, .096)]]);
+  GEO.maw = merged([[Bx(.068, .06, .06), M(0, .004, .066)]]);
+  for (let i = 0; i < 7; i++) tp.push([new THREE.ConeGeometry(.0048, .02 + (i % 2) * .008, 4), M(-.027 + i * .009, .0, .086 - Math.abs(i - 3) * .004)]);
+  GEO.teeth = merged(tp);
+  for (let i = 0; i < 4; i++) cl.push([new THREE.ConeGeometry(.0075, .085, 5), M(-.027 + i * .018, -.468, .04, Math.PI - .5, 0, 0)]); cl.push([new THREE.ConeGeometry(.007, .06, 5), M(.05, -.37, .03, Math.PI - .4, 0, -.8)]);
+  GEO.claw = merged(cl);
+  for (let i = 0; i < 5; i++) rb.push([Bx(.12, .013, .022), M(.055, .27 + i * .042, .122 - i * .005, 0, -.25, .18)]); rb.push([Bx(.016, .22, .02), M(-.012, .36, .12)]);
+  GEO.ribs = merged(rb); GEO.gore = merged([[Bx(.15, .23, .012), M(.05, .355, .108, 0, -.2, 0)]]);
   GEO.hair = new THREE.SphereGeometry(.119, 14, 8, 0, Math.PI * 2, 0, Math.PI * .42); GEO.hair.scale(.92, 1.2, 1.02);
   GEO.helmet = new THREE.SphereGeometry(.125, 14, 8, 0, Math.PI * 2, 0, Math.PI * .55); GEO.helmet.scale(.98, 1.2, 1.08);
   const B = (w, h, l) => new THREE.BoxGeometry(w, h, l);
   GEO.vest = merged([[B(.43, .36, .28), M(0, .36, 0)], [B(.1, .12, .06), M(-.125, .26, .16)], [B(.1, .12, .06), M(0, .26, .16)], [B(.1, .12, .06), M(.125, .26, .16)], [B(.16, .1, .05), M(.09, .45, .155)],
     [B(.3, .4, .15), M(0, .4, -.21)], [B(.26, .1, .16), M(0, .64, -.2)], [B(.07, .08, .3), M(-.14, .6, 0)], [B(.07, .08, .3), M(.14, .6, 0)], [B(.44, .07, .3), M(0, .12, 0)], [B(.09, .14, .07), M(-.2, .1, .1)], [B(.08, .2, .1), M(.23, .02, 0)]]);
 
-  const bump = bumpTex(), tones = ['#5d6654', '#6a6756', '#4c554e'];
+  const bump = bumpTex(), tones = ['#474d42', '#514f44', '#3a403b'];
   const skinT = base => canvasTex(256, (g, s) => {
     g.fillStyle = base; g.fillRect(0, 0, s, s); blotch(g, s, 44, '28,34,26', 6, 28, .55); blotch(g, s, 16, '112,114,92', 4, 16, .22); blotch(g, s, 10, '50,30,48', 6, 20, .3);
     veins(g, s, 14, 'rgba(38,28,52,.4)'); for (let i = 0; i < 4; i++) gash(g, Math.random() * s, Math.random() * s, rnd(6, 13)); blotch(g, s, 4, '70,6,4', 8, 24, .6); grainFx(g, s, 22);
@@ -979,10 +1038,10 @@ function initGeo() {
     g.fillStyle = base; g.fillRect(0, 0, s, s); blotch(g, s, 40, '28,34,26', 6, 26, .5); blotch(g, s, 12, '50,30,48', 6, 18, .3); veins(g, s, 10, 'rgba(38,28,52,.4)');
     const cx = 64, sh = (x, y, r, c, a) => { const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, `rgba(${c},${a})`); gr.addColorStop(1, `rgba(${c},0)`); g.fillStyle = gr; g.fillRect(x - r, y - r, r * 2, r * 2); };
     sh(cx - 24, 146, 17, '16,20,14', .6); sh(cx + 24, 146, 17, '16,20,14', .6); sh(cx, 96, 30, '20,22,16', .25);
-    for (const sx of [-17, 17]) { sh(cx + sx, 112, 21, '85,18,14', .45); sh(cx + sx, 112, 15, '4,2,2', 1); sh(cx + sx, 112, 11, '0,0,0', 1); }
+    for (const sx of [-17, 17]) { sh(cx + sx, 112, 21, '85,18,14', .45); sh(cx + sx, 112, 20, '4,2,2', 1); sh(cx + sx, 112, 15, '0,0,0', 1); for (let i = 0; i < 3; i++) { const x = cx + sx + rnd(-6, 6), h = rnd(14, 40), gr = g.createLinearGradient(0, 118, 0, 118 + h); gr.addColorStop(0, 'rgba(8,2,2,.9)'); gr.addColorStop(1, 'rgba(8,2,2,0)'); g.fillStyle = gr; g.fillRect(x, 118, rnd(2, 4), h); } }
     g.strokeStyle = 'rgba(12,10,8,.75)'; g.lineWidth = 3; for (const sx of [-17, 17]) { g.beginPath(); g.moveTo(cx + sx - 13, 100 + (sx > 0 ? -3 : 2)); g.quadraticCurveTo(cx + sx, 94, cx + sx + 13, 100 + (sx > 0 ? 2 : -3)); g.stroke(); }
     g.fillStyle = 'rgba(10,6,5,.85)'; g.beginPath(); g.ellipse(cx - 4, 139, 2.6, 2, 0, 0, 7); g.ellipse(cx + 4, 139, 2.6, 2, 0, 0, 7); g.fill();
-    sh(cx, 158, 26, '75,6,4', .55);
+    sh(cx, 158, 26, '75,6,4', .55); sh(cx, 172, 42, '58,4,3', .65);
     g.fillStyle = '#0d0303'; g.beginPath(); g.ellipse(cx, 156, 17, 9 + Math.random() * 3, rnd(-.12, .12), 0, 7); g.fill();
     g.fillStyle = '#b3aa82'; for (let i = -3; i <= 3; i++) { if (Math.random() < .2) continue; g.fillRect(cx + i * 4.3 - 1.6, 149 + Math.abs(i) * .7, 3.1, rnd(3, 5)); g.fillRect(cx + i * 4.1 - 1.5, 160 - Math.abs(i) * .6, 2.9, rnd(2.5, 4.5)); }
     for (let i = 0; i < 5; i++) { const x = cx + rnd(-14, 14), h = rnd(18, 60), gr = g.createLinearGradient(0, 162, 0, 162 + h); gr.addColorStop(0, 'rgba(70,4,3,.9)'); gr.addColorStop(1, 'rgba(70,4,3,0)'); g.fillStyle = gr; g.fillRect(x, 162, rnd(2, 6), h); }
@@ -1011,7 +1070,8 @@ function initGeo() {
   MAT.zBloat = new THREE.MeshStandardMaterial({ map: MAT.zSkin[0].map, color: 0xc6e88a, emissive: 0x0a1803, bumpMap: bump, bumpScale: .01, roughness: .45 }); MAT.zBloat.color.convertSRGBToLinear();
   MAT.zArmor = new THREE.MeshStandardMaterial({ color: 0x24282c, roughness: .6, metalness: .1 }); MAT.zArmor.color.convertSRGBToLinear();
   MAT.dark = new THREE.MeshStandardMaterial({ color: 0x0b0806, roughness: .9 });
-  MAT.eye = new THREE.MeshBasicMaterial({ color: 0x7d7a60 });
+  MAT.eye = new THREE.MeshBasicMaterial({ color: 0xeeeadb }); MAT.eyeR = new THREE.MeshBasicMaterial({ color: 0xff2c14 }); MAT.eyeG = new THREE.MeshBasicMaterial({ color: 0xa4ff4c });
+  MAT.bone = new THREE.MeshStandardMaterial({ color: 0x8c8262, roughness: .6 }); MAT.gore = new THREE.MeshStandardMaterial({ color: 0x2a0403, roughness: .25 }); MAT.bone.color.convertSRGBToLinear(); MAT.gore.color.convertSRGBToLinear();
   MAT.gear = new THREE.MeshStandardMaterial({ color: 0x2c3327, roughness: .9 }); MAT.gearC = [0x4a5a3c, 0x34507a, 0x7a3a30, 0x7a6c38].map(c => new THREE.MeshStandardMaterial({ color: c, roughness: .9 })); MAT.gear2 = new THREE.MeshStandardMaterial({ color: 0x33373a, roughness: .8 });
   MAT.pskin = new THREE.MeshStandardMaterial({ color: 0x9a7a66, roughness: .8 });
   for (const m of [MAT.gear, MAT.gear2, MAT.pskin, MAT.hair].concat(MAT.gearC)) m.color.convertSRGBToLinear();
@@ -1036,7 +1096,7 @@ function initGeo() {
 function buildHumanoid(o) {
   const g = new THREE.Group(), body = new THREE.Group(); g.add(body);
   const mk = (geo, mat, par, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x || 0, y || 0, z || 0); m.castShadow = true; par.add(m); return m; };
-  const legs = [], shins = [], arms = [], fore = [];
+  const legs = [], shins = [], arms = [], fore = []; let jaw = null;
   for (const s of [-1, 1]) {
     const leg = new THREE.Group(); leg.position.set(s * .1, .92, 0); body.add(leg); mk(GEO.thigh, o.pants, leg);
     const shin = new THREE.Group(); shin.position.y = -.46; leg.add(shin); mk(GEO.shin, o.pants, shin); mk(GEO.foot, o.shoe, shin);
@@ -1046,17 +1106,19 @@ function buildHumanoid(o) {
   const head = new THREE.Group(); head.position.set(0, .74, .015); torso.add(head);
   const skull = mk(GEO.headZ, o.face, head, 0, .135, 0); skull.userData.head = true;
   if (o.player) { mk(GEO.helmet, MAT.gear2, head, 0, .15, 0); mk(GEO.vest, MAT.gear2, torso); }
-  else { const e = mk(GEO.eyes, MAT.eye, head, 0, .135, 0); e.castShadow = false; e.userData.head = true; if (o.hair) mk(GEO.hair, MAT.hair, head, 0, .138, 0).userData.head = true; }
+  else { const e = mk(GEO.eyes, o.eye || MAT.eye, head, 0, .135, 0); e.castShadow = false; e.userData.head = true; if (o.hair) mk(GEO.hair, MAT.hair, head, 0, .138, 0).userData.head = true;
+    jaw = new THREE.Group(); jaw.position.set(0, .064, 0); head.add(jaw); mk(GEO.jaw, o.skin, jaw).userData.head = true; mk(GEO.maw, MAT.gDark, jaw).userData.head = true; mk(GEO.teeth, MAT.bone, jaw).userData.head = true; }
   for (const s of [-1, 1]) {
     const arm = new THREE.Group(); arm.position.set(s * .235, .56, 0); torso.add(arm); mk(GEO.upper, o.cloth, arm);
-    const f = new THREE.Group(); f.position.y = -.32; arm.add(f); mk(GEO.fore, o.skin, f); mk(GEO.hand, o.skin, f).scale.x = s;
+    const f = new THREE.Group(); f.position.y = -.32; arm.add(f); mk(GEO.fore, o.skin, f); mk(GEO.hand, o.skin, f).scale.x = s; if (!o.player) { mk(GEO.claw, MAT.bone, f); arm.scale.y = 1.12; }
     arms.push(arm); fore.push(f);
   }
-  return { g, body, torso, head, skull, legs, shins, arms, fore, ph: 0, lastAtk: 0 };
+  return { g, body, torso, head, skull, jaw, legs, shins, arms, fore, ph: 0, lastAtk: 0 };
 }
 function makeZombieView(z) {
   const R = seeded(z.id * 7919 + 13), tone = (R() * 3) | 0, ty = z.type || 'walker', bl = ty === 'bloater';
-  const v = buildHumanoid({ skin: bl ? MAT.zBloat : MAT.zSkin[tone], face: MAT.zFace[tone], cloth: bl ? MAT.zBloat : MAT.zShirt[ty === 'brute' ? 5 : (R() * 6) | 0], pants: MAT.zPants[(R() * 3) | 0], shoe: R() < .4 ? MAT.zSkin[tone] : MAT.dark, hair: ty !== 'armored' && R() < .6 });
+  const v = buildHumanoid({ skin: bl ? MAT.zBloat : MAT.zSkin[tone], face: MAT.zFace[tone], cloth: bl ? MAT.zBloat : MAT.zShirt[ty === 'brute' ? 5 : (R() * 6) | 0], pants: MAT.zPants[(R() * 3) | 0], shoe: R() < .4 ? MAT.zSkin[tone] : MAT.dark, hair: ty !== 'armored' && R() < .6, eye: ty === 'runner' || ty === 'brute' ? MAT.eyeR : bl ? MAT.eyeG : MAT.eye });
+  if (!bl && ty !== 'armored' && R() < .55) { for (const q of [[GEO.gore, MAT.gore], [GEO.ribs, MAT.bone]]) { const m = new THREE.Mesh(q[0], q[1]); m.castShadow = true; v.torso.add(m); } }
   v.limp = R() < .3 ? 1 : 0; v.armDown = R() < .25 ? (R() < .5 ? 0 : 1) : -1; v.tw = R() * 10; v.gy = z.y || 0;
   if (R() < .16 && ty !== 'crawler') v.fore[R() < .5 ? 0 : 1].visible = false;
   const sc = .94 + R() * .14; let sx = sc * (.92 + R() * .2), sy = sc, sz = sc * (.95 + R() * .15);
@@ -1392,7 +1454,7 @@ function killZombie(z, head, silent) {
     const vol = distVol(z.x, z.z, 40); _v.set(z.x, y + 1, z.z); burst(_v, 70, [.3, .5, .08], 4.5); sNoise(160, .5, vol * 1.2); sTone(70, .35, vol * .7, 'sine', 0, 30);
     if (G.host) for (const id in players) { const p = players[id]; if (Math.hypot(p.x - z.x, p.z - z.z) < 3.8 && Math.abs(p.y - y) < 2.5) damagePlayer(p, 45); } }
   bloodDecal(z.x, z.z, y); corpses.push({ v, t: 0 });
-  if (!silent) sGroan(distVol(z.x, z.z, 26) * .8);
+  if (!silent) sGroan(distVol(z.x, z.z, 26) * .8, panOf(z.x, z.z));
 }
 function hostHit(pid, zid, dmg, head, knife) {
   const z = zById[zid], p = players[pid]; if (!z || !p) return; const T = ZTYPES[z.type] || ZTYPES.walker;
@@ -1442,7 +1504,8 @@ function hostUpdate(dt) {
     let dx = gx - z.x, dz = gz - z.z; const dl = Math.hypot(dx, dz) || 1; dx /= dl; dz /= dl;
     z.rot = lerpAngle(z.rot, Math.atan2(td < 2.5 ? tp.x - z.x : dx, td < 2.5 ? tp.z - z.z : dz), dt * 8);
     for (const o of zombies) { if (o === z || Math.abs((o.y || 0) - zy) > 2) continue; const ox = z.x - o.x, oz = z.z - o.z, d2 = ox * ox + oz * oz; if (d2 < .5 && d2 > 1e-4) { const d = Math.sqrt(d2); dx += ox / d * (.72 - d) * 2.5; dz += oz / d * (.72 - d) * 2.5; } }
-    if (td > .9) moveCollide(z, z.x + dx * z.speed * dt, z.z + dz * z.speed * dt, .32);
+    const lunge = td < 6 && z.type !== 'brute' && z.type !== 'crawler' ? 1.3 : 1;   // they speed up for the last few steps
+    if (td > .9) moveCollide(z, z.x + dx * z.speed * lunge * dt, z.z + dz * z.speed * lunge * dt, .32);
     z.y = groundY(z);
     z.atkT -= dt; if (z.atk > 0) z.atk -= dt;
     if (td < (z.type === 'brute' ? 1.7 : 1.3) && z.atkT <= 0) { z.atkT = z.type === 'brute' ? 1.5 : 1.1; z.atk = .45; damagePlayer(tp, T.dmg); }
@@ -1539,7 +1602,7 @@ function updateLocal(dt) {
     if (L.crateT <= 0) { for (const id of ids) c.models[id].visible = false; c.lidP.rotation.x = 0; c.glow.base = .8; giveWeapon(L.crateW); showMsg(WEAPONS[L.crateW].name.toUpperCase(), 2); sNoise(2200, .08, .3); } }
   // camera
   const bobY = moving ? Math.sin(L.bob * 2) * (L.sprint ? .055 : .03) * (1 - L.ads * .7) : 0;
-  camera.position.set(me.x, EYE + me.y + bobY, me.z); camera.rotation.set(me.pitch, me.yaw, moving ? Math.sin(L.bob) * .006 : 0);
+  camera.position.set(me.x, EYE + me.y + bobY, me.z); camera.rotation.set(me.pitch + (L.hurt > .45 ? rnd(-.035, .035) : 0), me.yaw + (L.hurt > .45 ? rnd(-.035, .035) : 0), (moving ? Math.sin(L.bob) * .006 : 0) + (L.hurt > .3 ? rnd(-.05, .05) * L.hurt : 0));
   const fov = 72 / (1 + (d.zoom - 1) * L.ads) + (L.sprint ? 4 : 0); if (Math.abs(camera.fov - fov) > .05) { camera.fov += (fov - camera.fov) * Math.min(1, dt * 12); camera.updateProjectionMatrix(); }
   // view model
   for (const id in gunViews) gunViews[id].visible = id === w.id;
@@ -1554,13 +1617,15 @@ function updateLocal(dt) {
   if (knife.visible) { const t = 1 - L.meleeT / KNIFE_T, e = t * t * (3 - 2 * t), sw = Math.sin(t * Math.PI);
     knife.position.set(.3 - .56 * e, -.03 - .13 * e + .06 * sw, -.36 - .13 * sw); knife.rotation.set(.45 - .7 * e, .15 + 1.15 * e, -.7 + 1.3 * e); }
   muzzleFlash.position.set(0, gv.userData.muzzleY, gv.userData.muzzleZ - .06);
-  flashlight.intensity = L.flash ? 2.3 * (Math.random() < .004 ? .3 : 1) : 0; wLight.intensity = L.flash ? 1.4 : .4;
+  // the torch falters when something is close, and during a blackout
+  const fear = L.nearZ < 6 ? .3 + (6 - L.nearZ) * .15 : blackT > 0 ? 1.6 : .2; if (Math.random() < fear * dt) L.flick = rnd(.04, .13);   // flickers per second
+  if (L.flick > 0) L.flick -= dt; flashlight.intensity = L.flash ? 2.4 * (L.flick > 0 ? rnd(.05, .5) : 1) : 0; wLight.intensity = L.flash ? 1.4 : .4;
 }
 
 // ---------------------------------------------------------------- views
 const dropMeshes = {};
 function updateViews(dt) {
-  const k = Math.min(1, dt * 12);
+  const k = Math.min(1, dt * 12); L.nearZ = 99;
   for (const z of zombies) { const v = z.view, g = v.g; const ox = g.position.x, oz = g.position.z;
     g.position.x += (z.x - ox) * k; g.position.z += (z.z - oz) * k; v.gy += ((z.y || 0) - v.gy) * k; g.position.y = v.gy + (Math.min(1, z.rise) - 1) * 1.9;
     g.rotation.y = lerpAngle(g.rotation.y, z.rot, dt * 10);
@@ -1569,13 +1634,19 @@ function updateViews(dt) {
     v.shins[0].rotation.x = Math.max(0, -Math.sin(ph)) * .9 + .1; v.shins[1].rotation.x = Math.max(0, Math.sin(ph)) * .9 + .1;
     const atk = z.atk > 0 ? Math.sin(z.atk / .45 * Math.PI) : 0; const rising = z.rise < 1 ? 1 : 0;
     for (let i = 0; i < 2; i++) { v.arms[i].rotation.x = v.armDown === i ? -.2 + Math.sin(ph) * .3 : -1.35 + Math.sin(t * 2 + i * 2) * .12 - atk * .7 - rising * 1.2; v.arms[i].rotation.z = (i ? -1 : 1) * (.12 + atk * .2); v.fore[i].rotation.x = -.25 - atk * .5; }
-    v.torso.rotation.x = .26 + Math.sin(ph * 2) * .05 + atk * .25; v.torso.rotation.z = Math.sin(ph) * .07 + (v.limp ? .12 : 0);
-    v.head.rotation.z = Math.sin(t * 2.7) * .18; v.head.rotation.x = -.15 + Math.sin(t * 1.3) * .1;
+    const dm = Math.hypot(z.x - me.x, z.z - me.z) + Math.abs((z.y || 0) - me.y + L.jy) * 2, pn = panOf(z.x, z.z), close = clamp((7 - dm) / 5, 0, 1); if (dm < L.nearZ) L.nearZ = dm;
+    const spz = Math.sin(t * 27) * Math.max(0, Math.sin(t * 1.9 + v.tw * 3) - .8) * 5;   // sudden violent twitches
+    v.torso.rotation.x = .38 + Math.sin(ph * 2) * .06 + atk * .3 + close * .12 + spz * .08; v.torso.rotation.z = Math.sin(ph) * .07 + (v.limp ? .12 : 0);
+    v.head.rotation.z = Math.sin(t * 2.7) * .2 + spz * .5 + close * Math.sin(t * 31) * .06; v.head.rotation.x = -.28 + Math.sin(t * 1.3) * .1 - close * .15; v.head.rotation.y = spz * .4;
+    if (v.jaw) v.jaw.rotation.x = .16 + Math.sin(t * 3.1 + v.tw) * .08 + atk * .75 + close * (.45 + Math.sin(t * 19) * .12) + Math.abs(spz) * .3;
     if (v.run) { v.torso.rotation.x += .32; for (let i = 0; i < 2; i++) { v.arms[i].rotation.x = .5 + Math.sin(ph + i * Math.PI) * .9 - atk * 1.8; v.fore[i].rotation.x = -1.1; } }
     if (v.crawl) { v.body.rotation.x = 1.45; v.body.position.set(0, .12, -.7); v.torso.rotation.x = 0; v.torso.rotation.z = Math.sin(ph * 1.5) * .12; v.head.rotation.x = -1.25;
       for (let i = 0; i < 2; i++) { v.arms[i].rotation.x = -2.75 + Math.sin(ph * 1.5 + i * Math.PI) * .55 - atk * .4; v.fore[i].rotation.x = -.25; } }
-    if (z.atk > 0 && !v.lastAtk) sGroan(distVol(z.x, z.z, 14)); v.lastAtk = z.atk > 0 ? 1 : 0;
-    if (Math.random() < dt * .16) sGroan(distVol(z.x, z.z, 26) * .7);
+    if (z.atk > 0 && !v.lastAtk) sSnarl(distVol(z.x, z.z, 16), pn); v.lastAtk = z.atk > 0 ? 1 : 0;
+    if (Math.random() < dt * .2) sGroan(distVol(z.x, z.z, 28) * .75, pn);
+    if (dm < 7 && !v.scr && z.rise >= 1) { v.scr = 1; if (Math.random() < .65) sScream(.55 + .35 * (1 - dm / 7), pn);
+      const behind = (z.x - me.x) * -Math.sin(me.yaw) + (z.z - me.z) * -Math.cos(me.yaw) < 0; if (behind && dm < 5 && G.time - L.stingT > 14) { L.stingT = G.time; sSting(); } }
+    if (dm > 12) v.scr = 0;
   }
   for (let i = corpses.length - 1; i >= 0; i--) { const c = corpses[i]; c.t += dt; const f = Math.min(1, c.t / .5);
     if (!c.v.crawl) { c.v.body.rotation.x = -f * f * Math.PI / 2; c.v.body.position.y = f * .16; c.v.arms[0].rotation.x = c.v.arms[1].rotation.x = -1.35 + f * 1.2; } else c.v.head.rotation.x = -1.25 + f * 1.2;
@@ -1609,6 +1680,9 @@ function updateHUD(dt) {
   setH('scores', Object.values(players).sort((a, b) => b.points - a.points).map(p => `<div class="${p.id === G.myId ? 'me' : ''} ${p.down ? 'down' : ''}">${esc(p.name)}${p.down ? ' (down)' : ''} &nbsp; ${p.points}</div>`).join(''));
   $('hpbar').style.width = Math.max(0, me.hp / me.maxHp * 100) + '%'; $('hpbar').style.background = me.hp < me.maxHp * .4 ? '#c03030' : '#b8c4a0';
   $('hurt').style.opacity = Math.min(1, L.hurt * .8 + (me.down ? .8 : Math.max(0, 1 - me.hp / me.maxHp) * .7));
+  const danger = me.down ? 0 : Math.max(1 - me.hp / me.maxHp, clamp((9 - L.nearZ) / 9, 0, 1) * .8);
+  if (danger > .3) { L.hbT -= dt; if (L.hbT <= 0) { L.hbT = 1.15 - danger * .65; sHeart(.4 + danger * .6); } }
+  const sat = (.72 - Math.max(0, 1 - me.hp / me.maxHp) * .6).toFixed(2); if (hudCache.sat !== sat) { hudCache.sat = sat; $('c').style.filter = 'saturate(' + sat + ') contrast(1.12)'; }
   $('hit').style.opacity = L.hitFx; $('cross').style.opacity = L.ads > .5 || me.down ? 0 : 1;
   const it = nearestInteractable(); setH('prompt', me.down ? 'You are down. You get back up if your team survives the wave.' : it ? promptFor(it) : '');
   setH('power', G.evacT > 0 ? 'EXTRACTION IN ' + Math.ceil(G.evacT) + (EVAC && (me.l || 0) !== EVAC.l ? ' — GET TO THE ROOF' : '') : G.insta > 0 ? 'OVERKILL ' + Math.ceil(G.insta) : '');
@@ -1671,11 +1745,11 @@ function init() {
   renderer = new THREE.WebGLRenderer({ canvas: $('c'), antialias: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5)); renderer.setSize(innerWidth, innerHeight);
   renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.15; renderer.outputEncoding = THREE.sRGBEncoding; renderer.autoClear = false;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.0; renderer.outputEncoding = THREE.sRGBEncoding; renderer.autoClear = false;
   scene = new THREE.Scene(); scene.background = new THREE.Color(0x04060a); scene.fog = new THREE.FogExp2(0x04060a, .055);
   camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, .05, 200); camera.rotation.order = 'YXZ'; scene.add(camera);
   clock = new THREE.Clock(); raycaster = new THREE.Raycaster();
-  flashlight = new THREE.SpotLight(0xfff1d6, 2.3, 34, .5, .55, 1.4); flashlight.position.set(.22, -.18, 0); flashlight.castShadow = true;
+  flashlight = new THREE.SpotLight(0xfff1d6, 2.3, 34, .43, .6, 1.4); flashlight.position.set(.22, -.18, 0); flashlight.castShadow = true;
   flashlight.shadow.mapSize.set(1024, 1024); flashlight.shadow.camera.near = .3; flashlight.shadow.camera.far = 34; flashlight.shadow.bias = -.002;
   camera.add(flashlight); flashlight.target.position.set(0, 0, -6); camera.add(flashlight.target);
   muzzleLight = new THREE.PointLight(0xffc070, 0, 16, 1.5); muzzleLight.position.set(0, 0, -1); camera.add(muzzleLight);
